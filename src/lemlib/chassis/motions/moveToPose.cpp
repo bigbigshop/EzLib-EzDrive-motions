@@ -4,7 +4,7 @@
 #include "lemlib/timer.hpp"
 #include "lemlib/util.hpp"
 #include "pros/misc.hpp"
-#include "ez_compat/motion_math.hpp"
+#include "customs/ez_compat/motion_math.hpp"
 
 void lemlib::Chassis::moveToPose(float x, float y, float theta, int timeout, MoveToPoseParams params, bool async) {
     this->requestMotionStart();

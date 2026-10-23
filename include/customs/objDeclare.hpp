@@ -2,11 +2,15 @@
 
 #include "lemlib/api.hpp"
 #include "api.h"
-#include "ez_compat.hpp"
+#include "customs/ez_compat.hpp"
+#include "customs/pid_tuner.hpp"
+#include "robodash/api.h"
 
 //class Chassis;
 extern lemlib::Chassis chassis;
 extern ez_compat::EzDrive ezPID;
+extern ez_compat::PidTuner pidTuner;
+extern rd::Selector selector;
 extern lemlib::TrackingWheel vertical;
 extern lemlib::TrackingWheel horizontal;
 

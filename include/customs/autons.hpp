@@ -1,5 +1,5 @@
 #pragma once
-#include "objDeclare.hpp"
+#include "customs/objDeclare.hpp"
 
 void leftAuton();
 void leftAutonFinal();

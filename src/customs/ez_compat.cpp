@@ -1,5 +1,5 @@
-#include "ez_compat.hpp"
-#include "ez_compat/motion_math.hpp"
+#include "customs/ez_compat.hpp"
+#include "customs/ez_compat/motion_math.hpp"
 
 #include <cmath>
 #include <cstdio>

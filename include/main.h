@@ -41,13 +41,15 @@
  */
 //#include "okapi/api.hpp"
 #include "lemlib/api.hpp"
-#include "objDeclare.hpp"
-#include "autons.hpp"
-#include "functions.hpp"
+#include "customs/objDeclare.hpp"
+#include "customs/autons.hpp"
+#include "customs/relocate.hpp"
+#include "customs/controls.hpp"
+#include "customs/monitor.hpp"
 #include "robodash/api.h"
 //#include "wkf.hpp"
-#include "fsm.hpp"
-#include "ez_compat.hpp"
+#include "customs/fsm.hpp"
+#include "customs/ez_compat.hpp"
 
 extern int programNumber;
 extern int totalPrograms;

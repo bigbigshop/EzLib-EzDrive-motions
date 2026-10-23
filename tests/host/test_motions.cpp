@@ -1,8 +1,8 @@
 // Host tests for EzDrive PID, settle, and chassis motion math.
 // No PROS, no robot. Each case function is invoked three times.
 
-#include "ez_compat/motion_math.hpp"
-#include "ez_compat/pid.hpp"
+#include "customs/ez_compat/motion_math.hpp"
+#include "customs/ez_compat/pid.hpp"
 
 #include <cmath>
 #include <cstdio>
