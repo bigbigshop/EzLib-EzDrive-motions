@@ -2,8 +2,6 @@
 #include "api.h"
 #include "fsm.hpp"
 
- //drivePID(200, 0.35,0.000325, 0.63,1000);
- //turnPID(90,2.2,0.006,5.3,900);
 void stopMotors(){
   //auto_init_universal(0.0,USE_BACK | USE_LEFT); // start_theta_field = 0 (facing north)
   //pros::delay(100);
@@ -204,14 +202,18 @@ void rightAutonV2(){
   pros::delay(1900);
   stopMotors();
   cover.set_value(false);
-  drivePID(-200, 0.35,0.000325, 0.63,800);
+  // Was drivePID(-200, 0.35, 0.000325, 0.63, 800): -200 motor-encoder degrees.
+  // inches = deg/360 * pi * 3.25 * (360 wheel rpm / 600 blue) = -3.4 in.
+  // Degree-scale kP/kI/kD are not reused; this uses the gains from initialize().
+  ezPID.drive(-3.4, 100, 800);
   chassis.turnToHeading(90,800);
   chassis.moveToPose(13.13,33.33,104.3,1800,{true,6,0.3,110});
   intake_motors.move(127);
   low_roller.move(127);
   high_roller.move(50);
   pros::delay(1800);
-  drivePID(-200, 0.35,0.000325, 0.63,800);
+  // Was drivePID(-200, 0.35, 0.000325, 0.63, 800): -200 motor-encoder degrees -> -3.4 in.
+  ezPID.drive(-3.4, 100, 800);
   stopMotors();
   chassis.turnToHeading(-90,800);
   chassis.moveToPose(-20.92,33.2,-91.97,1000,{true,4,0.3,120});
