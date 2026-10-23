@@ -1,0 +1,102 @@
+#include <cmath>
+#include "lemlib/chassis/chassis.hpp"
+#include "lemlib/logger/logger.hpp"
+#include "lemlib/timer.hpp"
+#include "lemlib/util.hpp"
+#include "pros/misc.hpp"
+#include "ez_compat/motion_math.hpp"
+
+namespace {
+ez_compat::TurnDir toTurnDir(lemlib::AngularDirection direction) {
+    if (direction == lemlib::AngularDirection::CW_CLOCKWISE) return ez_compat::TurnDir::CW;
+    if (direction == lemlib::AngularDirection::CCW_COUNTERCLOCKWISE) return ez_compat::TurnDir::CCW;
+    return ez_compat::TurnDir::Auto;
+}
+} // namespace
+
+void lemlib::Chassis::swingToHeading(float theta, DriveSide lockedSide, int timeout, SwingToHeadingParams params,
+                                     bool async) {
+    params.minSpeed = fabs(params.minSpeed);
+    this->requestMotionStart();
+    if (!this->motionRunning) {
+        this->endMotion();
+        return;
+    }
+    if (async) {
+        pros::Task task([&]() { swingToHeading(theta, lockedSide, timeout, params, false); });
+        this->endMotion();
+        pros::delay(10);
+        return;
+    }
+    float targetTheta;
+    float deltaTheta;
+    float motorPower;
+    float prevMotorPower = 0;
+    float startTheta = getPose().theta;
+    bool settling = false;
+    bool angularDone = false;
+    std::optional<float> prevRawDeltaTheta = std::nullopt;
+    std::optional<float> prevDeltaTheta = std::nullopt;
+    std::uint8_t compState = pros::competition::get_status();
+    distTraveled = 0;
+    Timer timer(timeout);
+    angularLargeExit.reset();
+    angularSmallExit.reset();
+    resetMotionPIDs();
+    pros::MotorBrake brakeMode = (lockedSide == DriveSide::LEFT)
+                                     ? this->drivetrain.leftMotors->get_brake_mode_all().at(0)
+                                     : this->drivetrain.rightMotors->get_brake_mode_all().at(0);
+    if (lockedSide == DriveSide::LEFT) this->drivetrain.leftMotors->set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+    else this->drivetrain.rightMotors->set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+
+    while (!timer.isDone() && !angularDone && this->motionRunning) {
+        Pose pose = getPose();
+        pose.theta = fmod(pose.theta, 360);
+
+        distTraveled = fabs(ez_compat::heading_error_deg(pose.theta, startTheta));
+        targetTheta = theta;
+
+        const float rawDeltaTheta = ez_compat::heading_error_deg(targetTheta, pose.theta, ez_compat::TurnDir::Auto);
+        if (prevRawDeltaTheta == std::nullopt) prevRawDeltaTheta = rawDeltaTheta;
+        if (sgn(rawDeltaTheta) != sgn(prevRawDeltaTheta)) settling = true;
+        prevRawDeltaTheta = rawDeltaTheta;
+
+        const ez_compat::TurnDir dir = settling ? ez_compat::TurnDir::Auto : toTurnDir(params.direction);
+        deltaTheta = ez_compat::heading_error_deg(targetTheta, pose.theta, dir);
+        if (prevDeltaTheta == std::nullopt) prevDeltaTheta = deltaTheta;
+
+        if (params.minSpeed != 0 && fabs(deltaTheta) < params.earlyExitRange) break;
+        if (params.minSpeed != 0 && sgn(deltaTheta) != sgn(prevDeltaTheta)) break;
+
+        motorPower = commandAngular(deltaTheta);
+        angularDone = angularMotionSettled();
+
+        if (motorPower > params.maxSpeed) motorPower = params.maxSpeed;
+        else if (motorPower < -params.maxSpeed) motorPower = -params.maxSpeed;
+        if (fabs(deltaTheta) > 20) motorPower = slew(motorPower, prevMotorPower, angularSlewStep());
+        if (motorPower < 0 && motorPower > -params.minSpeed) motorPower = -params.minSpeed;
+        else if (motorPower > 0 && motorPower < params.minSpeed) motorPower = params.minSpeed;
+        prevMotorPower = motorPower;
+
+        infoSink()->debug("Turn Motor Power: {} ", motorPower);
+
+        if (!std::isfinite(motorPower)) motorPower = 0;
+        const ez_compat::SwingPower swing = ez_compat::swing_power(motorPower, lockedSide == DriveSide::LEFT);
+        if (swing.left_locked) {
+            drivetrain.rightMotors->move(swing.right);
+            drivetrain.leftMotors->brake();
+        } else {
+            drivetrain.leftMotors->move(swing.left);
+            drivetrain.rightMotors->brake();
+        }
+
+        pros::delay(10);
+    }
+
+    if (lockedSide == DriveSide::LEFT) this->drivetrain.leftMotors->set_brake_mode_all(brakeMode);
+    else this->drivetrain.rightMotors->set_brake_mode_all(brakeMode);
+    drivetrain.leftMotors->move(0);
+    drivetrain.rightMotors->move(0);
+    distTraveled = -1;
+    this->endMotion();
+}

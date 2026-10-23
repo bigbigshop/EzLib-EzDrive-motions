@@ -1,0 +1,8 @@
+bin/*
+.cache/*
+.d/*
+.DS_Store
+.vscode/
+uploads/
+tests/host/test_motions
+compile_commands.json
