@@ -1,8 +1,10 @@
 #include "pid_tuner.hpp"
+#include "customs/monitor.hpp"
 
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <string>
 
 namespace ez_compat {
 
@@ -10,7 +12,6 @@ namespace {
 
 struct BumpEvent {
         PidTuner* self;
-        int field;
         int direction;
 };
 
@@ -26,49 +27,55 @@ enum Action {
     ACT_TURN_NEG,
     ACT_PRINT,
     ACT_CONTROLLER,
-    ACT_POSE0
+    ACT_POSE0,
+    ACT_FIELD_PREV,
+    ACT_FIELD_NEXT
 };
 
-BumpEvent g_bumps[24];
-int g_bump_count = 0;
-ActionEvent g_actions[8];
+BumpEvent g_bumps[2];
+ActionEvent g_actions[12];
 int g_action_count = 0;
 
 lv_obj_t* make_button(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
                       lv_event_cb_t cb, void* user) {
     lv_obj_t* button = lv_btn_create(parent);
+    if (button == nullptr) return nullptr;
     lv_obj_set_pos(button, x, y);
     lv_obj_set_size(button, w, h);
     lv_obj_t* label = lv_label_create(button);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
+    if (label != nullptr) {
+        lv_label_set_text(label, text);
+        lv_obj_center(label);
+    }
     lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, user);
     return button;
 }
 
 void style_label(lv_obj_t* label) {
+    if (label == nullptr) return;
     lv_obj_set_style_text_color(label, lv_color_hex(0xF4F7FB), 0);
 }
 
 } // namespace
 
 const char* PidTuner::field_name(int field) const {
+    // Long names for brain + controller (small / big / vel, not sm/bg).
     switch (field) {
-        case F_DRIVE_P: return "D kP";
-        case F_DRIVE_I: return "D kI";
-        case F_DRIVE_D: return "D kD";
-        case F_DRIVE_SMALL: return "D sm";
-        case F_DRIVE_BIG: return "D bg";
-        case F_DRIVE_VEL: return "D vl";
-        case F_TURN_P: return "T kP";
-        case F_TURN_I: return "T kI";
-        case F_TURN_D: return "T kD";
-        case F_TURN_SMALL: return "T sm";
-        case F_TURN_BIG: return "T bg";
-        case F_TURN_VEL: return "T vl";
-        case F_HEAD_P: return "H kP";
-        case F_HEAD_I: return "H kI";
-        case F_HEAD_D: return "H kD";
+        case F_DRIVE_P: return "DRIVE kP";
+        case F_DRIVE_I: return "DRIVE kI";
+        case F_DRIVE_D: return "DRIVE kD";
+        case F_DRIVE_SMALL: return "DRIVE small";
+        case F_DRIVE_BIG: return "DRIVE big";
+        case F_DRIVE_VEL: return "DRIVE vel";
+        case F_TURN_P: return "TURN kP";
+        case F_TURN_I: return "TURN kI";
+        case F_TURN_D: return "TURN kD";
+        case F_TURN_SMALL: return "TURN small";
+        case F_TURN_BIG: return "TURN big";
+        case F_TURN_VEL: return "TURN vel";
+        case F_HEAD_P: return "HEAD kP";
+        case F_HEAD_I: return "HEAD kI";
+        case F_HEAD_D: return "HEAD kD";
         default: return "?";
     }
 }
@@ -145,35 +152,45 @@ void PidTuner::set_field_value(int field, double value) {
 
 void PidTuner::bump(int field, int direction) {
     if (field < 0 || field >= F_COUNT) return;
-    const double next = field_value(field) + direction * field_step(field);
-    set_field_value(field, next);
+    set_field_value(field, field_value(field) + direction * field_step(field));
 }
 
 void PidTuner::print_now() {
-    drive.print_constants();
-    std::snprintf(note_text_, sizeof(note_text_), "printed to terminal — paste into initialize()");
+    const std::string snippet = drive.constants_snippet();
+    std::printf("%s", snippet.c_str());
+    std::fflush(stdout);
+    console.focus();
+    console.clear();
+    console.println("=== EzDrive constants (paste into initialize) ===");
+    console.println(snippet);
+    std::snprintf(note_text_, sizeof(note_text_), "printed — see Console / serial");
     note_dirty_ = true;
 }
 
 void PidTuner::test_drive(double inches) {
-    if (drive.is_busy()) return;
+    if (drive.is_busy()) drive.cancel_movement();
     drive.drive(inches, 90, 1800, true);
 }
 
 void PidTuner::test_turn(double degrees) {
-    if (drive.is_busy()) return;
+    if (drive.is_busy()) drive.cancel_movement();
     drive.turn(degrees, 90, 1500, true);
 }
 
 void PidTuner::zero_pose() {
     drive.set_pose(0, 0, 0);
-    std::snprintf(note_text_, sizeof(note_text_), "pose set to 0,0,0");
+    drive.reset_pid();
+    std::snprintf(note_text_, sizeof(note_text_), "pose set to 0,0,0 (odom only)");
     note_dirty_ = true;
+}
+
+void PidTuner::step_field(int direction) {
+    field_ = (field_ + direction + F_COUNT) % F_COUNT;
 }
 
 void PidTuner::on_bump_event(lv_event_t* event) {
     auto* bump = static_cast<BumpEvent*>(lv_event_get_user_data(event));
-    if (bump != nullptr && bump->self != nullptr) bump->self->bump(bump->field, bump->direction);
+    if (bump != nullptr && bump->self != nullptr) bump->self->bump(bump->self->field_, bump->direction);
 }
 
 void PidTuner::on_action_event(lv_event_t* event) {
@@ -188,6 +205,8 @@ void PidTuner::on_action_event(lv_event_t* event) {
         case ACT_PRINT: self->print_now(); break;
         case ACT_CONTROLLER: self->toggle_controller_mode(); break;
         case ACT_POSE0: self->zero_pose(); break;
+        case ACT_FIELD_PREV: self->step_field(-1); break;
+        case ACT_FIELD_NEXT: self->step_field(+1); break;
         default: break;
     }
 }
@@ -198,15 +217,18 @@ void PidTuner::on_timer(lv_timer_t* timer) {
 }
 
 void PidTuner::refresh() {
-    char buf[48];
-    for (int field = F_DRIVE_P; field <= F_TURN_VEL; ++field) {
-        if (value_labels_[field] == nullptr) continue;
-        std::snprintf(buf, sizeof(buf), "%.3f", field_value(field));
-        lv_label_set_text(value_labels_[field], buf);
+    char buf[64];
+    if (field_label_ != nullptr) {
+        std::snprintf(buf, sizeof(buf), "%s", field_name(field_));
+        lv_label_set_text(field_label_, buf);
+    }
+    if (value_label_ != nullptr) {
+        std::snprintf(buf, sizeof(buf), "%.4f   step %.3g", field_value(field_), field_step(field_));
+        lv_label_set_text(value_label_, buf);
     }
     if (live_ != nullptr) {
-        std::snprintf(buf, sizeof(buf), "err  drive %+.2f in   turn %+.1f deg%s", drive.drive_pid().error,
-                      drive.turn_pid().error, controller_mode_ ? "   CTRL" : "");
+        std::snprintf(buf, sizeof(buf), "err drive %+.2f in  turn %+.1f deg%s", drive.drive_pid().error,
+                      drive.turn_pid().error, controller_mode_ ? "  CTRL" : "");
         lv_label_set_text(live_, buf);
     }
     if (note_ != nullptr && note_dirty_) {
@@ -218,6 +240,10 @@ void PidTuner::refresh() {
 void PidTuner::start() {
     if (started_) return;
     started_ = true;
+    g_action_count = 0;
+
+    // Compact UI only — two-column grid OOMs the 32KB LVGL heap (pc:3807204 /
+    // lv_obj_class_create_obj). Long field names still show on the active row.
     view_ = rd_view_create("PID");
     if (view_ == nullptr) return;
     rd_view_set_anims(view_, RD_ANIM_OFF);
@@ -228,73 +254,63 @@ void PidTuner::start() {
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
     lv_obj_t* title = lv_label_create(parent);
-    lv_label_set_text(title, "EzDrive PID   inches / deg   no SD");
-    lv_obj_set_pos(title, 8, 2);
-    style_label(title);
-
-    live_ = lv_label_create(parent);
-    lv_label_set_text(live_, "err  drive 0.00 in   turn 0.0 deg");
-    lv_obj_set_pos(live_, 8, 20);
-    style_label(live_);
-
-    const int drive_fields[] = {F_DRIVE_P, F_DRIVE_I, F_DRIVE_D, F_DRIVE_SMALL, F_DRIVE_BIG, F_DRIVE_VEL};
-    const int turn_fields[] = {F_TURN_P, F_TURN_I, F_TURN_D, F_TURN_SMALL, F_TURN_BIG, F_TURN_VEL};
-    const char* row_names[] = {"kP", "kI", "kD", "small", "big", "vel"};
-
-    auto build_column = [&](int x, const char* header, const int* fields) {
-        lv_obj_t* head = lv_label_create(parent);
-        lv_label_set_text(head, header);
-        lv_obj_set_pos(head, x, 40);
-        style_label(head);
-        for (int row = 0; row < 6; ++row) {
-            const int y = 58 + row * 22;
-            const int field = fields[row];
-            lv_obj_t* name = lv_label_create(parent);
-            lv_label_set_text(name, row_names[row]);
-            lv_obj_set_pos(name, x, y + 2);
-            style_label(name);
-
-            if (g_bump_count + 2 > static_cast<int>(sizeof(g_bumps) / sizeof(g_bumps[0]))) return;
-            g_bumps[g_bump_count] = {this, field, -1};
-            make_button(parent, "-", x + 48, y, 28, 20, on_bump_event, &g_bumps[g_bump_count]);
-            ++g_bump_count;
-
-            value_labels_[field] = lv_label_create(parent);
-            lv_label_set_text(value_labels_[field], "0");
-            lv_obj_set_pos(value_labels_[field], x + 80, y + 2);
-            style_label(value_labels_[field]);
-
-            g_bumps[g_bump_count] = {this, field, +1};
-            make_button(parent, "+", x + 148, y, 28, 20, on_bump_event, &g_bumps[g_bump_count]);
-            ++g_bump_count;
-        }
-    };
-
-    build_column(8, "DRIVE in", drive_fields);
-    build_column(250, "TURN deg", turn_fields);
-
-    const int actions[] = {ACT_DRIVE_POS, ACT_DRIVE_NEG, ACT_TURN_POS, ACT_TURN_NEG, ACT_PRINT, ACT_CONTROLLER,
-                           ACT_POSE0};
-    const char* action_text[] = {"+12in", "-12in", "+90", "-90", "Print", "Ctrl", "Pose0"};
-    const int action_count = static_cast<int>(sizeof(actions) / sizeof(actions[0]));
-    const lv_coord_t action_w = 64;
-    const lv_coord_t action_gap = 3;
-    for (int i = 0; i < action_count; ++i) {
-        if (g_action_count >= static_cast<int>(sizeof(g_actions) / sizeof(g_actions[0]))) break;
-        g_actions[g_action_count] = {this, actions[i]};
-        lv_obj_t* button = make_button(parent, action_text[i], 6 + i * (action_w + action_gap), 196, action_w, 22,
-                                       on_action_event, &g_actions[g_action_count]);
-        lv_obj_set_style_pad_hor(button, 1, 0);
-        lv_obj_set_style_pad_ver(button, 0, 0);
-        lv_obj_t* label = lv_obj_get_child(button, 0);
-        if (label != nullptr) lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
-        ++g_action_count;
+    if (title != nullptr) {
+        lv_label_set_text(title, "EzDrive PID  < > field   +/- value");
+        lv_obj_set_pos(title, 8, 4);
+        style_label(title);
     }
 
+    live_ = lv_label_create(parent);
+    if (live_ != nullptr) {
+        lv_label_set_text(live_, "err drive 0.00 in  turn 0.0 deg");
+        lv_obj_set_pos(live_, 8, 28);
+        style_label(live_);
+    }
+
+    field_label_ = lv_label_create(parent);
+    if (field_label_ != nullptr) {
+        lv_label_set_text(field_label_, "DRIVE kP");
+        lv_obj_set_pos(field_label_, 8, 56);
+        style_label(field_label_);
+    }
+
+    value_label_ = lv_label_create(parent);
+    if (value_label_ != nullptr) {
+        lv_label_set_text(value_label_, "0");
+        lv_obj_set_pos(value_label_, 8, 80);
+        style_label(value_label_);
+    }
+
+    auto add_action = [&](const char* text, int action, lv_coord_t x, lv_coord_t y, lv_coord_t w) {
+        if (g_action_count >= static_cast<int>(sizeof(g_actions) / sizeof(g_actions[0]))) return;
+        g_actions[g_action_count] = {this, action};
+        make_button(parent, text, x, y, w, 28, on_action_event, &g_actions[g_action_count]);
+        ++g_action_count;
+    };
+
+    add_action("<", ACT_FIELD_PREV, 8, 112, 44);
+    add_action(">", ACT_FIELD_NEXT, 60, 112, 44);
+    g_bumps[0] = {this, -1};
+    make_button(parent, "-", 120, 112, 44, 28, on_bump_event, &g_bumps[0]);
+    g_bumps[1] = {this, +1};
+    make_button(parent, "+", 172, 112, 44, 28, on_bump_event, &g_bumps[1]);
+
+    add_action("+12in", ACT_DRIVE_POS, 8, 152, 72);
+    add_action("-12in", ACT_DRIVE_NEG, 88, 152, 72);
+    add_action("+90", ACT_TURN_POS, 168, 152, 56);
+    add_action("-90", ACT_TURN_NEG, 232, 152, 56);
+    add_action("Print", ACT_PRINT, 296, 152, 64);
+
+    // Single action row — Pose0 stays above robodash chrome and remains tappable.
+    add_action("Ctrl", ACT_CONTROLLER, 8, 188, 72);
+    add_action("Pose0", ACT_POSE0, 88, 188, 72);
+
     note_ = lv_label_create(parent);
-    lv_label_set_text(note_, note_text_);
-    lv_obj_set_pos(note_, 8, 220);
-    style_label(note_);
+    if (note_ != nullptr) {
+        lv_label_set_text(note_, note_text_);
+        lv_obj_set_pos(note_, 8, 220);
+        style_label(note_);
+    }
 
     lv_timer_create(on_timer, 100, this);
     refresh();
@@ -312,14 +328,14 @@ bool PidTuner::suppress_arcade() const { return controller_mode_ || drive.is_bus
 void PidTuner::format_controller(char line0[32], char line1[32], char line2[32]) const {
     std::snprintf(line0, 32, "%s %.3g", field_name(field_), field_value(field_));
     std::snprintf(line1, 32, "e %+.2f %+.1f", drive.drive_pid().error, drive.turn_pid().error);
-    std::snprintf(line2, 32, "A+12 B90 R1=0");
+    std::snprintf(line2, 32, "睇Github");
 }
 
 void PidTuner::handle_controller(pros::Controller& controller) {
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_X) &&
         !controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
-        controller_mode_ = false;
-        drive.cancel_movement();
+        toggle_controller_mode();
+        controller.rumble(".");
         return;
     }
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_LEFT)) {

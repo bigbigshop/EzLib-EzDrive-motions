@@ -101,13 +101,10 @@ lemlib::ControllerSettings angular_controller(3.6, // proportional gain (kP)
 // create the chassis
 lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttleCurve, &steerCurve);
 
-pros::Motor fl_m(14, pros::MotorGearset::blue);
-pros::Motor bl_m(15, pros::MotorGearset::blue);
-pros::Motor fr_m(11, pros::MotorGearset::blue);
-pros::Motor br_m(12, pros::MotorGearset::blue);
-
-// 更新 ezPID 初始化
-ez_compat::EzDrive ezPID(chassis, drivetrain, &fl_m, &bl_m, &fr_m, &br_m);
+// Tank drive: do NOT also construct pros::Motor on the same ports as leftMotors/rightMotors.
+// Duplicate handles (e.g. Motor(14) vs MotorGroup{-14}) fight reverse/encoder state and
+// can make ezPID.drive(+12) unable to move forward. xPose motors stay nullptr (x-drive off).
+ez_compat::EzDrive ezPID(chassis, drivetrain);
 ez_compat::PidTuner pidTuner(ezPID);
 /**
  * Runs initialization code. This occurs as soon as the program is started.
@@ -158,6 +155,7 @@ void initialize() {
     ezPID.set_drive_velocity_threshold(0.10);   // inches per 10ms
     ezPID.set_turn_velocity_threshold(0.25);    // degrees per 10ms
     ezPID.set_heading_velocity_threshold(0.25); // degrees per 10ms
+    // Compact PID page only (full two-column UI OOMs 32KB LVGL → pc:3807204).
     pidTuner.start();
 
     //auto_init_universal(20,USE_BACK | USE_LEFT);
@@ -247,8 +245,9 @@ void opcontrol() {
 
     while (true) {
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
-        pneumaticsBtn();
 
+        // Open/handle tuner BEFORE pneumaticsBtn — that helper calls
+        // get_digital_new_press(X/A/Y) and would swallow exit / Print / A-drive.
         static bool tuner_combo_was_down = false;
         const bool tuner_combo = controller.get_digital(DIGITAL_X) && controller.get_digital(DIGITAL_A);
         bool tuner_just_opened = false;
@@ -260,10 +259,13 @@ void opcontrol() {
 
         if (pidTuner.controller_mode() && !tuner_just_opened) {
             pidTuner.handle_controller(controller);
-        } else if (!pidTuner.suppress_arcade()) {
-        int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
-        int leftX = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_X);
-        chassis.arcade(leftY, (leftX*0.75));
+        } else if (!pidTuner.controller_mode()) {
+            pneumaticsBtn();
+            if (!pidTuner.suppress_arcade()) {
+                int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
+                int leftX = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_X);
+                chassis.arcade(leftY, (leftX * 0.75));
+            }
         }
 
         if (odomIsUp && !odomUpRunning) {

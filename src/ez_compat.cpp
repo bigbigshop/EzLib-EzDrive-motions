@@ -82,6 +82,8 @@ void EzDrive::stop_motors() {
 void EzDrive::launch_motion(bool async, int timeout, const std::function<void()>& body) {
     motions_pending.fetch_add(1);
     last_motion_timeout_ms = timeout;
+    // Same pattern as LemLib async motions: acquire, spawn worker that re-acquires, then
+    // release so the worker can take the chassis mutex.
     if (!begin_motion()) {
         motions_pending.fetch_sub(1);
         return;
@@ -94,6 +96,8 @@ void EzDrive::launch_motion(bool async, int timeout, const std::function<void()>
                 motions_pending.fetch_sub(1);
                 return;
             }
+            break_drive = false;
+            break_turn = false;
             chassis.setDistTraveled(0);
             body();
             stop_motors();
@@ -106,6 +110,8 @@ void EzDrive::launch_motion(bool async, int timeout, const std::function<void()>
         pros::delay(10);
         return;
     }
+    break_drive = false;
+    break_turn = false;
     body();
     stop_motors();
     chassis.setDistTraveled(-1);

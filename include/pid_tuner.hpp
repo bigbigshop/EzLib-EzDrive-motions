@@ -8,6 +8,7 @@
 namespace ez_compat {
 
 // Brain + controller tuner for EzDrive gains. Nothing is written to the SD card.
+// Brain UI stays compact: LVGL heap is only 32KB in the prebuilt liblvgl.a.
 class PidTuner {
     public:
         explicit PidTuner(EzDrive& drive) : drive(drive) {}
@@ -45,7 +46,8 @@ class PidTuner {
         bool started_ = false;
         int field_ = 0;
         rd_view_t* view_ = nullptr;
-        lv_obj_t* value_labels_[F_TURN_VEL + 1] = {};
+        lv_obj_t* field_label_ = nullptr;
+        lv_obj_t* value_label_ = nullptr;
         lv_obj_t* live_ = nullptr;
         lv_obj_t* note_ = nullptr;
         char note_text_[96] = "Print copies constants to the terminal";
@@ -53,6 +55,7 @@ class PidTuner {
 
         void refresh();
         void bump(int field, int direction);
+        void step_field(int direction);
         void print_now();
         void test_drive(double inches);
         void test_turn(double degrees);

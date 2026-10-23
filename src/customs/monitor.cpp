@@ -6,18 +6,9 @@
 #include <cstring>
 #include <string>
 
+// No robodash Image views — each full-screen Image plus the PID page OOMs the
+// 32KB LVGL heap (pc:3807204 / lv_obj_class_create_obj). Selector + Console only.
 //rd::Image image(&kukuku, "Driver");
-
-rd::Image img1(&robot01, "01");
-rd::Image img2(&robot02, "02");
-rd::Image img3(&robot03, "03");
-rd::Image img4(&robot04, "04");
-rd::Image img5(&robot05, "05");
-rd::Image img6(&robot06, "06");
-rd::Image img7(&robot07, "07");
-rd::Image img8(&robot08, "08");
-rd::Image img9(&robot09, "09");
-rd::Image img10(&robot10, "10");
 
 rd::Console console;
 
@@ -29,36 +20,13 @@ float elapsedSec = 0;
 // 合併所有 UI 相關任務到一個 Thread，減少競爭與紅屏風險
 void uiTask_fn() {
     pros::delay(1000); // 等待系統完全啟動
-    uint32_t lastAnimTime = 0;
     uint32_t lastControllerTime = 0;
-    int animFrame = 1;
 
     while (true) {
         uint32_t now = pros::millis();
+        (void)autoChange; // Image anim pages removed — keeps LVGL under 32KB
 
-        // 1. 處理圖片動畫 (每 100ms 切換一幀)
-        if (!pros::competition::is_connected()) {
-            if (autoChange && (now - lastAnimTime > 100)) {
-                switch(animFrame) {
-                    case 1: img1.focus(); break;
-                    case 2: img2.focus(); break;
-                    case 3: img3.focus(); break;
-                    case 4: img4.focus(); break;
-                    case 5: img5.focus(); break;
-                    case 6: img6.focus(); break;
-                    case 7: img7.focus(); break;
-                    case 8: img8.focus(); break;
-                    case 9: img9.focus(); break;
-                    case 10: img10.focus(); break;
-
-                }
-                animFrame = (animFrame % 10) + 1;
-                lastAnimTime = now;
-            }
-        }
-
-
-        // 2. Controller text. Print a changed line only — never clear() on a timer.
+        // Controller text. Print a changed line only — never clear() on a timer.
         if (!pros::competition::is_connected() && (now - lastControllerTime > 60)) {
             static char pending[3][32] = {};
             static bool dirty[3] = {};
