@@ -4,7 +4,7 @@
 #include "lemlib/timer.hpp"
 #include "lemlib/util.hpp"
 #include "pros/misc.hpp"
-#include "customs/ez_compat/motion_math.hpp"
+#include "ez_compat/motion_math.hpp"
 
 namespace {
 ez_compat::TurnDir toTurnDir(lemlib::AngularDirection direction) {

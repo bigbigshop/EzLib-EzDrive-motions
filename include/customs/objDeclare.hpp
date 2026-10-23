@@ -2,8 +2,8 @@
 
 #include "lemlib/api.hpp"
 #include "api.h"
-#include "customs/ez_compat.hpp"
-#include "customs/pid_tuner.hpp"
+#include "ez_compat.hpp"
+#include "pid_tuner.hpp"
 #include "robodash/api.h"
 
 //class Chassis;
@@ -36,14 +36,6 @@ inline pros::Distance dist_front(6);
 inline pros::Distance dist_back(21);
 inline pros::Distance dist_left(3);
 inline pros::Distance dist_right(9);
-
-/*
-inline pros::Distance dist_front(6);
-inline pros::Distance dist_back(18);
-inline pros::Distance dist_left(11);
-inline pros::Distance dist_right(17);
-*/
-
 
 inline pros::Motor left_intake(20);
 inline pros::Motor right_intake(-17);

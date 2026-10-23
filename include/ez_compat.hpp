@@ -1,6 +1,6 @@
 #pragma once
 #include "lemlib/api.hpp"
-#include "customs/ez_compat/pid.hpp"
+#include "ez_compat/pid.hpp"
 
 #include <atomic>
 #include <cstdint>
