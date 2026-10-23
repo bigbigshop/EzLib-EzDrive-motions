@@ -172,7 +172,8 @@ Ez motions and the chassis motions above set `distTraveled` to 0 at the start an
    - Gains and thresholds stay at 0 or above.
 3. The live line is `err drive +0.00 in   turn +0.0 deg` (the last PID error).
 4. **+12in**, **-12in**, **+90**, and **-90** call `drive(..., true)` or `turn(..., true)`. A press is ignored while `is_busy()` is true. **Print** writes a snippet to the terminal. **Ctrl** toggles the controller tuner.
-5. Paste that snippet over `set_drive_constants` through `set_turn_slew` in `initialize()`. Print format:
+5. **Pose0** (controller **R1** while the tuner is open) sets pose to 0, 0, 0 and does not start a drive; the note reads `pose set to 0,0,0`. **+12in** and **A** run `ezPID.drive` async on the same PID as auton.
+6. Paste that snippet over `set_drive_constants` through `set_turn_slew` in `initialize()`. Print format:
 
 ```cpp
 ezPID.set_drive_constants(8.2500, 0.0000, 42.0000, 0.0000);
@@ -202,9 +203,10 @@ Unplug the competition switch. Press **X+A** together to enter (rising edge; tha
 | Y | print constants to the terminal |
 | L1 | `drive(-12 in)` |
 | L2 | `turn` to heading -90° |
+| R1 | set pose to 0, 0, 0 (no drive) |
 | X, released from A | exit and cancel |
 
-With the tuner open, arcade and auton changes stay off. L1 and L2 are the test motions, and the intake holds the state it had when the tuner opened. The three controller lines show the field and value, the error, and `A+12 B+90 Ypr`.
+With the tuner open, arcade and auton changes stay off. L1 and L2 are the test motions, R1 sets the pose to 0, 0, 0, and the intake holds the state it had when the tuner opened. The three controller lines show the field and value, the error, and `A+12 B90 R1=0`.
 
 With the competition switch unplugged and the tuner closed: UP cancels the motion, calls `reset_pid()`, and rumbles; DOWN+B runs `autonomous()`; the left and right arrows change the auton. DOWN+Y runs `moveToPose(0, 0, 0, ...)` async.
 

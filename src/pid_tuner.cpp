@@ -19,7 +19,15 @@ struct ActionEvent {
         int action;
 };
 
-enum Action { ACT_DRIVE_POS = 1, ACT_DRIVE_NEG, ACT_TURN_POS, ACT_TURN_NEG, ACT_PRINT, ACT_CONTROLLER };
+enum Action {
+    ACT_DRIVE_POS = 1,
+    ACT_DRIVE_NEG,
+    ACT_TURN_POS,
+    ACT_TURN_NEG,
+    ACT_PRINT,
+    ACT_CONTROLLER,
+    ACT_POSE0
+};
 
 BumpEvent g_bumps[24];
 int g_bump_count = 0;
@@ -157,6 +165,12 @@ void PidTuner::test_turn(double degrees) {
     drive.turn(degrees, 90, 1500, true);
 }
 
+void PidTuner::zero_pose() {
+    drive.set_pose(0, 0, 0);
+    std::snprintf(note_text_, sizeof(note_text_), "pose set to 0,0,0");
+    note_dirty_ = true;
+}
+
 void PidTuner::on_bump_event(lv_event_t* event) {
     auto* bump = static_cast<BumpEvent*>(lv_event_get_user_data(event));
     if (bump != nullptr && bump->self != nullptr) bump->self->bump(bump->field, bump->direction);
@@ -173,6 +187,7 @@ void PidTuner::on_action_event(lv_event_t* event) {
         case ACT_TURN_NEG: self->test_turn(-90); break;
         case ACT_PRINT: self->print_now(); break;
         case ACT_CONTROLLER: self->toggle_controller_mode(); break;
+        case ACT_POSE0: self->zero_pose(); break;
         default: break;
     }
 }
@@ -258,12 +273,21 @@ void PidTuner::start() {
     build_column(8, "DRIVE in", drive_fields);
     build_column(250, "TURN deg", turn_fields);
 
-    const int actions[] = {ACT_DRIVE_POS, ACT_DRIVE_NEG, ACT_TURN_POS, ACT_TURN_NEG, ACT_PRINT, ACT_CONTROLLER};
-    const char* action_text[] = {"+12in", "-12in", "+90", "-90", "Print", "Ctrl"};
-    for (int i = 0; i < 6; ++i) {
+    const int actions[] = {ACT_DRIVE_POS, ACT_DRIVE_NEG, ACT_TURN_POS, ACT_TURN_NEG, ACT_PRINT, ACT_CONTROLLER,
+                           ACT_POSE0};
+    const char* action_text[] = {"+12in", "-12in", "+90", "-90", "Print", "Ctrl", "Pose0"};
+    const int action_count = static_cast<int>(sizeof(actions) / sizeof(actions[0]));
+    const lv_coord_t action_w = 64;
+    const lv_coord_t action_gap = 3;
+    for (int i = 0; i < action_count; ++i) {
         if (g_action_count >= static_cast<int>(sizeof(g_actions) / sizeof(g_actions[0]))) break;
         g_actions[g_action_count] = {this, actions[i]};
-        make_button(parent, action_text[i], 8 + i * 78, 196, 74, 22, on_action_event, &g_actions[g_action_count]);
+        lv_obj_t* button = make_button(parent, action_text[i], 6 + i * (action_w + action_gap), 196, action_w, 22,
+                                       on_action_event, &g_actions[g_action_count]);
+        lv_obj_set_style_pad_hor(button, 1, 0);
+        lv_obj_set_style_pad_ver(button, 0, 0);
+        lv_obj_t* label = lv_obj_get_child(button, 0);
+        if (label != nullptr) lv_obj_set_style_text_font(label, &lv_font_montserrat_14, 0);
         ++g_action_count;
     }
 
@@ -288,7 +312,7 @@ bool PidTuner::suppress_arcade() const { return controller_mode_ || drive.is_bus
 void PidTuner::format_controller(char line0[32], char line1[32], char line2[32]) const {
     std::snprintf(line0, 32, "%s %.3g", field_name(field_), field_value(field_));
     std::snprintf(line1, 32, "e %+.2f %+.1f", drive.drive_pid().error, drive.turn_pid().error);
-    std::snprintf(line2, 32, "A+12 B+90 Ypr");
+    std::snprintf(line2, 32, "A+12 B90 R1=0");
 }
 
 void PidTuner::handle_controller(pros::Controller& controller) {
@@ -309,6 +333,7 @@ void PidTuner::handle_controller(pros::Controller& controller) {
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_Y)) print_now();
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) test_drive(-12);
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) test_turn(-90);
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) zero_pose();
 }
 
 } // namespace ez_compat

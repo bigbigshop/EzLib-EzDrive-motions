@@ -60,6 +60,8 @@ class EzDrive {
         void waitUntilAngle(double degrees);
 
         void cancel_movement();
+        // Odometry only. Does not start or cancel a motion.
+        void set_pose(double x, double y, double theta);
         // Returns when the EzDrive motion task (and any chassis motion) has released
         // the drive. Also returns on a safety timeout so a stuck flag cannot hang auton.
         void waitUntilDone();

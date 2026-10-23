@@ -326,6 +326,10 @@ void EzDrive::cancel_movement() {
     pros::delay(20);
 }
 
+void EzDrive::set_pose(double x, double y, double theta) {
+    chassis.setPose(static_cast<float>(x), static_cast<float>(y), static_cast<float>(theta));
+}
+
 void EzDrive::reset_pid() {
     drivePID.reset();
     headingPID.reset();

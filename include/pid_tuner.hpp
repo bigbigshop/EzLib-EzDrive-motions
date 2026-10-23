@@ -56,6 +56,7 @@ class PidTuner {
         void print_now();
         void test_drive(double inches);
         void test_turn(double degrees);
+        void zero_pose();
         const char* field_name(int field) const;
         double field_value(int field) const;
         void set_field_value(int field, double value);
