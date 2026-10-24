@@ -10,6 +10,8 @@
 
 此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` 已重建，heap **256KB**）。
 
+舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表）已過期。
+
 | Git 參考 | 說明 |
 | --- | --- |
 | `main` | 目前主線（含 256KB LVGL、SD CSV、動畫、場控 teardown） |
@@ -19,6 +21,12 @@
 ---
 
 ## Changelog
+
+### 2026-10-24 — README：reset／宣告／monitor／RW 對比
+
+- 補齊 `wallReset`、`getRealPose`、馬達／氣動 declare、controller monitor。
+- 寫明 **expected − (actual − golden)** 相對校正（唔使度 sensor offset）。
+- 對比 [RW-Template](https://github.com/richardbwang/RW-Template) distance reset（絕對場地座標 + CAD offset）。
 
 ### 2026-10-24 — LVGL heap 256KB + 文件
 
@@ -39,6 +47,7 @@
 - `EzDrive` bind 後，`moveToPose` / `turnToHeading` 等共用 `ezPID` 的 drive/turn PID。
 - 移除 purePID；auton 改走 `ezPID`。
 - 程式重組：`customs/`、`ez_compat`、`pid_tuner`、`relocate`。
+- 混合架構：LemLib 曲線／長距 + `ezPID` 短距精準 + 中段 `wallReset`／`getRealPose`（見舊站序言）。
 
 ---
 
@@ -48,39 +57,82 @@
 
 | 路徑 | 內容 |
 | --- | --- |
-| `src/main.cpp` | `chassis` / `ezPID` / `pidTuner` 定義、`initialize` / `opcontrol` |
-| `include/customs/objDeclare.hpp` | 全域 `extern` 與 inline 感測器／氣動 |
+| `src/main.cpp` | 底盤馬達／IMU／tracking／`chassis`／`ezPID`／`pidTuner` 定義 |
+| `include/customs/objDeclare.hpp` | `extern` + **inline** 感測器／intake／氣動 |
+| `include/relocate.hpp` + `src/relocate.cpp` | `wallReset`、`getRealPose`、distance 濾波、`auto_init_universal` |
 | `include/ez_compat.hpp` + `src/ez_compat.cpp` | `EzDrive` |
 | `include/pid_tuner.hpp` + `src/pid_tuner.cpp` | Brain + controller PID 調校器 |
 | `include/customs/sd_log.hpp` + `src/customs/sd_log.cpp` | SD CSV append |
-| `src/customs/monitor.cpp` | controller 文字、動畫、telemetry Console |
+| `src/customs/monitor.cpp` | controller 三行文字、動畫、Console 遙測 |
+| `src/customs/controls.cpp` | `pneumaticsBtn()` |
 | `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫帧（flash，不佔 LVGL heap） |
 | `firmware/liblvgl.a` | 預編譯 LVGL（含實際 `LV_MEM_SIZE` pool） |
 
-### `objDeclare.hpp` 慣例
+### 慣例：`extern` vs `inline`
 
-在 `.cpp` **定義**一次，在 header **`extern` 宣告**給其他檔使用：
+| 類型 | 放哪 | 例子 |
+| --- | --- | --- |
+| 單例／大物件 | `main.cpp` **定義** + `objDeclare.hpp` **`extern`** | `chassis`、`ezPID`、`leftMotors`、`imu`、`controller` |
+| 小硬體、多檔共用 | `objDeclare.hpp` **`inline`**（header-only 一份） | `dist_*`、`intake_motors`、氣動 |
+| 動畫帧 | 各 `robotXX.c` 定義 + header `extern` | `robot01`…`robot10` |
 
 ```cpp
-// include/customs/objDeclare.hpp
+// include/customs/objDeclare.hpp（摘要）
 extern lemlib::Chassis chassis;
 extern ez_compat::EzDrive ezPID;
 extern ez_compat::PidTuner pidTuner;
 extern rd::Selector selector;
 extern pros::Controller controller;
+extern pros::MotorGroup leftMotors;
+extern pros::MotorGroup rightMotors;
 extern pros::Imu imu;
 extern const lv_img_dsc_t robot01;  // … robot10
-// Distance / pneumatics 可用 inline 物件（每個 TU 一份，或集中定義）
+
+inline pros::Distance dist_front(6);
+inline pros::Distance dist_back(21);
+inline pros::Distance dist_left(3);
+inline pros::Distance dist_right(9);
+
+inline pros::Motor left_intake(20);
+inline pros::Motor right_intake(-17);
+inline pros::Motor low_roller(18);
+inline pros::Motor high_roller(19);
+inline pros::MotorGroup intake_motors({20, -17});
+
+inline pros::adi::Pneumatics arm('A', false);
+inline pros::adi::Pneumatics cover('D', false);
+inline pros::adi::Pneumatics hook('B', false);
+inline pros::adi::Pneumatics matchload('C', false);
 ```
 
 ```cpp
-// src/main.cpp（定義）
-lemlib::Chassis chassis(...);
+// src/main.cpp（定義底盤側）
+pros::MotorGroup rightMotors({11, 12, 13}, pros::MotorGearset::blue);
+pros::MotorGroup leftMotors({-14, -15, -16}, pros::MotorGearset::blue);
+pros::Imu imu(5);
+// … TrackingWheel / Drivetrain / Chassis …
 ez_compat::EzDrive ezPID(chassis, drivetrain);
 ez_compat::PidTuner pidTuner(ezPID);
 ```
 
-動畫帧：各 `src/assets/robotXX.c` 內有 `const lv_img_dsc_t robotXX = {...}`；`monitor.cpp` 透過 `extern` 取址。未使用的 `kukuku` 可刪 `extern`（`.c` 仍會 link 食 flash）。
+**馬達注意**
+
+- 負 port = 反轉（例 `-14`）。
+- **禁止**對同一 port 再 `pros::Motor(...)` 一份——會同 `MotorGroup` 搶 reverse／encoder，導致 `ezPID.drive` 異常（見 `main.cpp` 註解）。
+- Intake 用獨立 `Motor`／`MotorGroup`；底盤只用 `leftMotors`／`rightMotors`。
+
+**氣動**
+
+- `pros::adi::Pneumatics(port, start_extended)`：第二參數 `false` = 開機收回。
+- 手制：`pneumaticsBtn()`（`controls.cpp`）— **僅在 tuner 關閉時**呼叫（避免同 X/A 衝突）。
+
+| 掣 | 氣動 |
+| --- | --- |
+| X | arm／hook 序列（伸臂→延遲收 hook） |
+| A | `hook.toggle()` |
+| Y | `matchload.toggle()` |
+
+動畫帧：各 `src/assets/robotXX.c` 內有 `const lv_img_dsc_t robotXX`；`monitor.cpp` 透過 `extern` 取址。未使用的 `kukuku` 可刪 `extern`（`.c` 仍會 link 食 flash）。
 
 新圖流程：
 
@@ -183,6 +235,86 @@ ezPID.waitUntilDone();
 
 ---
 
+## 座標重置：`wallReset` / `getRealPose`
+
+Odometry 會長距離累積誤差。本庫用兩層中段校正（理念與 [舊說明書第四章](https://ezlib.ykyle.eu/) 相同，實作在 `src/relocate.cpp`）。
+
+### `wallReset` — 撞牆硬重置
+
+電流＋低速判定「撞實」後，把對應軸寫死為 0，並寫入 `theta`。
+
+```cpp
+void wallReset(char axis, int velocity, float theta, int timeout_ms = 1500);
+// 例：向後撞、貼著定義 Y=0 的牆（axis 'x'），航向寫 0
+wallReset('x', -30, 0, 800);
+```
+
+| 參數 | 意義 |
+| --- | --- |
+| `axis` | `'x'`：認為貼緊 **X 軸牆** → `setPose(x, 0, theta)`；`'y'` → `setPose(0, y, theta)` |
+| `velocity` | `tank(v,v)` 恆功率；負=倒車撞，正=前撞（常見 ±30～60） |
+| `theta` | 撞實當下強制寫入的航向 |
+| `timeout_ms` | 安全超時；內部用 `|vel|<2` 且電流 >2000mA 維持 ~100ms 當 stall |
+
+撞完會 `tank(0,0)`、短 delay，然後還原 `BRAKE_COAST`。之後通常再接 `getRealPose` 修另一軸。
+
+### `getRealPose` — 距離感測器**相對**校正（唔使度 offset）
+
+```cpp
+double getRealPose(double expected, double golden, pros::Distance& sensor, int side);
+// 語意：return expected - (actual - golden) * side
+```
+
+| 參數 | 意義 |
+| --- | --- |
+| `expected` | 你**預期**此時該軸座標（例：應在 Y=0 附近就傳 `0`） |
+| `golden` | 當機器人**真的停在 expected** 時，感測器應讀到的距離（吋）。在練習場量一次寫死即可 |
+| `sensor` | `dist_front` / `back` / `left` / `right` |
+| `side` | `+1`：感測器朝 **座標增大** 方向（北／東）；`-1`：朝南／西 |
+
+內部：`get_kf_dist` 濾波；讀數異常／低 confidence 直接回 `expected`；`|actual−golden| < 0.25"` 忽略（防微震）。
+
+```cpp
+// 例：右感測器朝東 (side=+1)，預期 X≈0，golden 量過 = 17.61"
+chassis.setPose(
+    getRealPose(0, 17.61, dist_right, 1),
+    getRealPose(0, 8.7,  dist_back, -1),
+    0
+);
+```
+
+**為何唔用絕對場地座標（wall ±70.25" − 讀數 − CAD offset）？**
+
+正式／練習場圍欄常有 **±1" 以上砌裝誤差**。若用「絕對距離 → 絕對 (x,y)」，等於把**場地公差**寫進 odometry。`getRealPose` 只問：「相對我練車時量好的 golden，差咗幾吋？」——**唔使量測 distance sensor 相對 tracking center 的 CAD offset**，也較唔會被場地歪度拖死。
+
+量 `golden` 的做法：物理對位／治具把車放到 auton 中該 reset 的姿態 → 讀 Console 上該 sensor 吋數 → 寫進程式。換場地若圍欄差很多，可重量 golden，而唔使改整套 offset 幾何。
+
+`auto_init_universal`（多感測器絕對開局）仍在 `relocate.cpp`，但實戰**不建議**當開局主力——offset 難準、場地公差致命；開局優先物理頂牆 + `setPose(0,0,0)`（舊站第六章）。
+
+### 同 RW-Template distance reset 比較
+
+參考：[RW-Template Localization](https://richardbwang.github.io/RW-Template/guide/localization/)、[Configuration · Distance sensors](https://richardbwang.github.io/RW-Template/guide/configuration/)、repo [richardbwang/RW-Template](https://github.com/richardbwang/RW-Template)。
+
+| | **EzLib `getRealPose`** | **RW-Template `resetPosition*()`（約 3.x／4.x）** |
+| --- | --- | --- |
+| 座標模型 | **相對**：`expected − (actual − golden)×side` | **絕對**：場地中心原點、牆在 ±70.25"，由讀數反推場地 (x,y) |
+| Sensor offset | **唔使**度 tracking center→感測器面 | **必須**量／填每個 sensor 的 X/Y offset（吋，相對車心） |
+| 斜角／轉角 | 假設大致垂直牆；斜打時誤差較大 | 射線追蹤到實際撞牆點；斜角、近角有過濾 |
+| 場地砌裝誤差 | 設計上**避開**：唔把牆當完美絕對尺 | 依賴場地幾何正確；牆歪會直接餵進 pose |
+| 開局／中段 | 中段微調；開局推物理對位 | 任意時刻 `resetPositionFront/Back/Left/Right()` |
+| 連續定位 | 無內建 MCL（有 1D KF 濾波） | 另有 **MCL** 粒子濾波（文件標註偏新、先練場測） |
+| 調參成本 | 每段 reset 記一個 `golden` | 一次量齊 offset + 場地座標系習慣 |
+| 失敗時 | 差太細／低 conf → 回傳 `expected`（唔亂改） | 過斜、近角、同 odom 差太大 → skip，回傳 `false` |
+
+**點樣揀**
+
+- 要**少量 CAD、對抗爛場地、auton 裡已知「我大概喺邊」** → EzLib `getRealPose` + `wallReset`。
+- 要**斜牆／轉角射線、自動揀牆、可選 MCL、同絕對場地路徑緊耦合** → RW-Template 較完整；但要認真量 offset，並接受場地公差會入系統。
+
+兩者都解決「純 odom 飄」；EzLib 刻意用 **預計−實際**，正係因為比賽場多數砌得唔準。
+
+---
+
 ## PID 調校器
 
 `pidTuner.start()` 在 `initialize()` 呼叫。增益寫在 `ezPID` 上，與 auton／底盤 motion **同一套**。
@@ -272,29 +404,55 @@ L2/R2 十圈測試。欄位：
 
 ---
 
-## 場控／比賽模式
+## Controller monitor（`monitor.cpp`）
+
+`initialize()` 開兩條 task：`uiTask_fn`（controller 三行 + 動畫）、`telemetry_fn`（Brain Console）。
+
+### 設計要點（相對舊站「telemetry 狂刷」）
+
+- Controller **只在字變了才 `print` 一行**（`dirty[]` + round-robin），唔定時 `clear()`——減 V5 controller 丟字／卡死。
+- 場控接上：停 Console `clear+printf`、刪 Anim／PID page，慳 LVGL heap。
+- `displayMenu` 用右搖桿左右切頁（練習場、非 tuner）。
+
+### Controller 三行內容
+
+| 模式 | L0 | L1 | L2 |
+| --- | --- | --- | --- |
+| **場控** `is_connected()` | `B:% C:%`（手制／Brain 電量） | auton 名 | `X Y T`（整數吋／度） |
+| **Tuner 開** | `pidTuner.format_controller`（field／值／狀態） | | |
+| **練習 displayMenu=0** | `T:秒` | `B:% C:%` | auton 名 |
+| **displayMenu=1** | `D:` `ezPID.get_traveled()`（For PID Distance） | `T:` theta | （空） |
+| **displayMenu=2** | `X:` | `Y:` | `T:` |
+
+舊站「用手推車睇 For PID Distance」＝練習場切到 **menu 1**。
+
+### Console（僅練習場）
+
+循環印：pose、六驅＋intake 溫度、`Dist` traveled、`LVGL %used`、四向 distance（KF 吋 + confidence）。場控時整段 skip。
+
+### 場控／比賽模式
 
 `pros::competition::is_connected()` 為真時：
 
 1. `pidTuner.force_off()` / 禁止 X+A 開 tuner  
 2. 停動畫；`destroy_robot_anim()` + `pidTuner.release_ui()`（刪 view，還 LVGL）  
 3. 停 Console 溫度／distance／`clear+printf` 迴圈  
-4. Controller 三行：`B:% C:%`、auton 名、`X Y T`  
+4. Controller 精簡三行（上表）  
 5. 拔出場控後自動 `pidTuner.start()` 重建 PID 頁  
 
-練習場（無場控）仍有完整 telemetry（含 `LVGL xx% used`）與右搖桿 display 分頁。
-
-### 練習場 controller（tuner 關）
+### 練習場快捷鍵（tuner 關）
 
 | 操作 | 作用 |
 | --- | --- |
-| 右搖桿左右 | displayMenu 0/1/2（計時電池／里程朝向／XYZ） |
+| 右搖桿左右 | `displayMenu` 0／1／2 |
 | LEFT / RIGHT | 換 auton + `set_pose(0,0,0)` |
 | UP（短按 new） | cancel + `reset_pid` + rumble |
-| UP（按住） | 開動畫 |
+| UP（按住） | 開動畫（`autoChange`） |
 | DOWN | focus Console |
 | DOWN+B | 跑 `autonomous()` |
 | DOWN+Y | `moveToPose(0,0,0,…)` |
+
+氣動掣見上方 **氣動** 表；tuner 開時 X／A／B／Y／肩鍵改歸 PID 調校。
 
 ---
 
@@ -318,11 +476,16 @@ Console（練習場）會印 `LVGL %used / free B`，方便確認是否接近 OO
 | 功能 | 狀態 |
 | --- | --- |
 | `ezPID.drive` / `turn` / bind 底盤 PID | ✓ |
+| LemLib `moveToPoint`／`moveToPose`／`turnTo*` | ✓ |
+| `wallReset` 撞牆硬重置 | ✓ |
+| `getRealPose` 相對距離校正（無 CAD offset） | ✓ |
+| 馬達／氣動／distance `objDeclare` | ✓ |
+| Controller monitor 分頁 + 場控精簡 | ✓ |
 | PID Brain + controller 調校 | ✓ |
 | SD `pid_tune_log.csv` / `findingOffset.csv` | ✓ |
 | ±12in IMU／odom 顯示與記錄 | ✓ |
 | robot01–10 單 view 動畫 | ✓ |
-| 場控 teardown UI + 精簡 controller | ✓ |
+| 場控 teardown UI | ✓ |
 | LVGL 256KB heap | ✓（`main`） |
 | SD 卡直接播 PNG/JPG | ✗（須 converter） |
-| 完整 MCL／多狀態 EKF | 未內建（`relocate` 有距離 1D filter） |
+| RW 式絕對場地 distance reset / MCL | 未內建（可對照 [RW-Template](https://github.com/richardbwang/RW-Template)） |
