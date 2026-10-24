@@ -65,7 +65,7 @@
 | `include/customs/sd_log.hpp` + `src/customs/sd_log.cpp` | SD CSV append |
 | `src/customs/monitor.cpp` | controller 三行文字、動畫、Console 遙測 |
 | `src/customs/controls.cpp` | `pneumaticsBtn()` |
-| `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫帧（flash，不佔 LVGL heap） |
+| `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫幀（flash，不佔 LVGL heap） |
 | `firmware/liblvgl.a` | 預編譯 LVGL（含實際 `LV_MEM_SIZE` pool） |
 
 ### 慣例：`extern` vs `inline`
@@ -74,7 +74,7 @@
 | --- | --- | --- |
 | 單例／大物件 | `main.cpp` **定義** + `objDeclare.hpp` **`extern`** | `chassis`、`ezPID`、`leftMotors`、`imu`、`controller` |
 | 小硬體、多檔共用 | `objDeclare.hpp` **`inline`**（header-only 一份） | `dist_*`、`intake_motors`、氣動 |
-| 動畫帧 | 各 `robotXX.c` 定義 + header `extern` | `robot01`…`robot10` |
+| 動畫幀 | 各 `robotXX.c` 定義 + header `extern` | `robot01`…`robot10` |
 
 ```cpp
 // include/customs/objDeclare.hpp（摘要）
@@ -132,7 +132,7 @@ ez_compat::PidTuner pidTuner(ezPID);
 | A | `hook.toggle()` |
 | Y | `matchload.toggle()` |
 
-動畫帧：各 `src/assets/robotXX.c` 內有 `const lv_img_dsc_t robotXX`；`monitor.cpp` 透過 `extern` 取址。未使用的 `kukuku` 可刪 `extern`（`.c` 仍會 link 食 flash）。
+動畫幀：各 `src/assets/robotXX.c` 內有 `const lv_img_dsc_t robotXX`；`monitor.cpp` 透過 `extern` 取址。未使用的 `kukuku` 可刪 `extern`（`.c` 仍會 link 食 flash）。
 
 新圖流程：
 
@@ -400,7 +400,7 @@ L2/R2 十圈測試。欄位：
 - **一個** robodash view `Anim` + **一個** `lv_img`，timer 換 `robot01`…`robot10` src。
 - Controller **UP**（非場控、非 tuner）→ `autoChange = true` 開始播。
 - LEFT/RIGHT 選 auton、DOWN 開 console 等會把 `autoChange = false`。
-- **不要**為每帧建一個 `rd::Image` 再 `.focus()`——那會爆 LVGL heap。
+- **不要**為每幀建一個 `rd::Image` 再 `.focus()`——那會爆 LVGL heap。
 
 ---
 
