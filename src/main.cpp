@@ -246,12 +246,19 @@ void opcontrol() {
     while (true) {
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
 
+        // Field control: tear down Anim + PID pages once (see telemetry_fn edge).
+        const bool on_field = pros::competition::is_connected();
+        if (on_field) {
+            pidTuner.force_off();
+            autoChange = false;
+        }
+
         // Open/handle tuner BEFORE pneumaticsBtn — that helper calls
         // get_digital_new_press(X/A/Y) and would swallow exit / Print / A-drive.
         static bool tuner_combo_was_down = false;
         const bool tuner_combo = controller.get_digital(DIGITAL_X) && controller.get_digital(DIGITAL_A);
         bool tuner_just_opened = false;
-        if (tuner_combo && !tuner_combo_was_down && !pidTuner.controller_mode()) {
+        if (!on_field && tuner_combo && !tuner_combo_was_down && !pidTuner.controller_mode()) {
             pidTuner.toggle_controller_mode();
             tuner_just_opened = true;
         }
@@ -296,12 +303,16 @@ void opcontrol() {
                 autoChange = false;
                 selector.prev_auton();
                 selector.focus();
+                ezPID.set_pose(0, 0, 0);
+                ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses
             }
             if(controller.get_digital(DIGITAL_RIGHT)) {
                 autoChange = false;
                 selector.next_auton();
                 selector.focus();
+                ezPID.set_pose(0, 0, 0);
+                ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses
             }
 
@@ -332,7 +343,7 @@ void opcontrol() {
         }        
         
         if (pidTuner.controller_mode()) {
-            // L1/L2 are tuner test moves while the controller tuner is open.
+            // Intake shoulders reserved: L1/R1 turn, L2/R2 = 10spin CCW/CW.
         } else if(controller.get_digital(DIGITAL_R1)){
             setIntakeState(IntakeState::INTAKE);
 
@@ -346,10 +357,9 @@ void opcontrol() {
             setIntakeState(IntakeState::STOP);
         }
         
-        if(!pidTuner.controller_mode() && controller.get_digital(DIGITAL_UP)) {
+        if (!on_field && !pidTuner.controller_mode() && controller.get_digital(DIGITAL_UP)) {
+            // Starts robot01–10 anim (single view + lv_img_set_src in monitor.cpp).
             autoChange = true;
-            //pros::delay(300); // delay to prevent multiple presses
-            //image.focus();
         }
         pros::delay(20); // delay to save resources
     }

@@ -1,8 +1,13 @@
 #include "pid_tuner.hpp"
 #include "customs/monitor.hpp"
+#include "customs/objDeclare.hpp"
+#include "customs/sd_log.hpp"
+
+#include "pros/rtos.hpp"
 
 #include <cmath>
 #include <cstdio>
+#include <ctime>
 #include <cstring>
 #include <string>
 
@@ -29,8 +34,37 @@ enum Action {
     ACT_CONTROLLER,
     ACT_POSE0,
     ACT_FIELD_PREV,
-    ACT_FIELD_NEXT
+    ACT_FIELD_NEXT,
+    ACT_OFFSET_CCW,
+    ACT_OFFSET_CW
 };
+
+constexpr const char* k_pid_csv = "/usd/pid_tune_log.csv";
+constexpr const char* k_pid_header =
+    "timestamp_ms,wall_time,event,cmd_inches,cmd_heading,"
+    "drive_kp,drive_ki,drive_kd,drive_error,drive_sm,drive_bg,drive_vl,"
+    "turn_kp,turn_ki,turn_kd,turn_error,turn_sm,turn_bg,turn_vl,"
+    "head_kp,head_ki,head_kd,head_error,head_sm,head_bg,head_vl,"
+    "odom_x,odom_y,odom_theta,odom_theta_delta,"
+    "imu_heading,imu_rotation,imu_rotation_delta,traveled";
+
+constexpr const char* k_offset_csv = "/usd/findingOffset.csv";
+constexpr const char* k_offset_header =
+    "timestamp_ms,wall_time,dir,rev,quarter,odom_x,odom_y,odom_theta,imu_heading,imu_rotation";
+
+void wall_time_str(char* out, std::size_t n) {
+    const std::time_t t = std::time(nullptr);
+    if (t > 0) {
+        std::tm* tm = std::localtime(&t);
+        if (tm != nullptr) {
+            std::snprintf(out, n, "%04d-%02d-%02d_%02d:%02d:%02d", tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                          tm->tm_hour, tm->tm_min, tm->tm_sec);
+            return;
+        }
+    }
+    // V5 often has no RTC — fall back to boot millis.
+    std::snprintf(out, n, "boot_%lu", static_cast<unsigned long>(pros::millis()));
+}
 
 BumpEvent g_bumps[2];
 ActionEvent g_actions[12];
@@ -155,6 +189,11 @@ void PidTuner::bump(int field, int direction) {
     set_field_value(field, field_value(field) + direction * field_step(field));
 }
 
+void PidTuner::set_note(const char* text) {
+    std::snprintf(note_text_, sizeof(note_text_), "%s", text != nullptr ? text : "");
+    note_dirty_ = true;
+}
+
 void PidTuner::print_now() {
     const std::string snippet = drive.constants_snippet();
     std::printf("%s", snippet.c_str());
@@ -163,25 +202,134 @@ void PidTuner::print_now() {
     console.clear();
     console.println("=== EzDrive constants (paste into initialize) ===");
     console.println(snippet);
-    std::snprintf(note_text_, sizeof(note_text_), "printed — see Console / serial");
-    note_dirty_ = true;
+    log_pid_event("print", 0, 0, chassis.getPose().theta, imu.get_rotation(), imu.get_heading());
+    set_note(sd_log::card_present() ? "printed + SD snapshot" : "printed (no SD)");
+}
+
+void PidTuner::log_pid_event(const char* event, double cmd_inches, double cmd_heading, double start_odom_theta,
+                             double start_imu_rot, double start_imu_heading) {
+    (void)start_imu_heading;
+    const auto& d = drive.drive_pid();
+    const auto& t = drive.turn_pid();
+    const auto& h = drive.heading_pid();
+    const lemlib::Pose pose = chassis.getPose();
+    const double imu_rot = imu.get_rotation();
+    const double imu_head = imu.get_heading();
+    const double odom_delta = pose.theta - start_odom_theta;
+    const double imu_delta = imu_rot - start_imu_rot;
+
+    char wall[32];
+    wall_time_str(wall, sizeof(wall));
+
+    const bool ok = sd_log::append_csvf(
+        k_pid_csv, k_pid_header,
+        "%lu,%s,%s,%.3f,%.3f,"
+        "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+        "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+        "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+        "%.4f,%.4f,%.4f,%.4f,"
+        "%.4f,%.4f,%.4f,%.4f",
+        static_cast<unsigned long>(pros::millis()), wall, event, cmd_inches, cmd_heading, d.kp, d.ki, d.kd, d.error,
+        d.small_error, d.big_error, d.velocity_threshold, t.kp, t.ki, t.kd, t.error, t.small_error, t.big_error,
+        t.velocity_threshold, h.kp, h.ki, h.kd, h.error, h.small_error, h.big_error, h.velocity_threshold, pose.x,
+        pose.y, pose.theta, odom_delta, imu_head, imu_rot, imu_delta, drive.get_traveled());
+
+    if (std::strcmp(event, "drive") == 0) {
+        last_imu_delta_ = imu_delta;
+        last_odom_delta_ = odom_delta;
+        last_imu_heading_ = imu_head;
+        last_odom_theta_ = pose.theta;
+        has_drive_sample_ = true;
+        char note[96];
+        std::snprintf(note, sizeof(note), "dIMU%+.2f dOdom%+.2f%s", imu_delta, odom_delta, ok ? " SD" : " noSD");
+        set_note(note);
+    } else if (!ok) {
+        set_note("SD write failed / no card");
+    }
 }
 
 void PidTuner::test_drive(double inches) {
+    if (offset_running_) return;
     if (drive.is_busy()) drive.cancel_movement();
+    const double start_odom = chassis.getPose().theta;
+    const double start_imu_rot = imu.get_rotation();
+    const double start_imu_head = imu.get_heading();
     drive.drive(inches, 90, 1800, true);
+    pros::Task([this, inches, start_odom, start_imu_rot, start_imu_head]() {
+        drive.waitUntilDone();
+        log_pid_event("drive", inches, 0, start_odom, start_imu_rot, start_imu_head);
+    });
 }
 
 void PidTuner::test_turn(double degrees) {
+    if (offset_running_) return;
     if (drive.is_busy()) drive.cancel_movement();
+    const double start_odom = chassis.getPose().theta;
+    const double start_imu_rot = imu.get_rotation();
+    const double start_imu_head = imu.get_heading();
     drive.turn(degrees, 90, 1500, true);
+    pros::Task([this, degrees, start_odom, start_imu_rot, start_imu_head]() {
+        drive.waitUntilDone();
+        log_pid_event("turn", 0, degrees, start_odom, start_imu_rot, start_imu_head);
+    });
 }
 
 void PidTuner::zero_pose() {
     drive.set_pose(0, 0, 0);
     drive.reset_pid();
-    std::snprintf(note_text_, sizeof(note_text_), "pose set to 0,0,0 (odom only)");
-    note_dirty_ = true;
+    set_note("pose set to 0,0,0 (odom only)");
+}
+
+void PidTuner::run_offset_spins(int direction) {
+    if (direction != 1 && direction != -1) direction = -1;
+    if (offset_running_) {
+        set_note("offset test already running");
+        return;
+    }
+    if (!sd_log::card_present()) {
+        set_note("need SD for findingOffset.csv");
+    }
+    offset_running_ = true;
+    if (drive.is_busy()) drive.cancel_movement();
+
+    pros::Task([this, direction]() {
+        // 10 revs = 40 × (±90°) so wrap PID can complete full circles.
+        const char* dir_name = direction > 0 ? "CCW" : "CW";
+        const double step_deg = direction > 0 ? 90.0 : -90.0;
+
+        drive.set_pose(0, 0, 0);
+        drive.reset_pid();
+        pros::delay(50);
+
+        auto log_rev = [dir_name](int rev, int quarter) {
+            const lemlib::Pose p = chassis.getPose();
+            char wall[32];
+            wall_time_str(wall, sizeof(wall));
+            sd_log::append_csvf(k_offset_csv, k_offset_header, "%lu,%s,%s,%d,%d,%.4f,%.4f,%.4f,%.4f,%.4f",
+                                static_cast<unsigned long>(pros::millis()), wall, dir_name, rev, quarter, p.x, p.y,
+                                p.theta, imu.get_heading(), imu.get_rotation());
+        };
+
+        log_rev(0, 0);
+        char start_note[64];
+        std::snprintf(start_note, sizeof(start_note), "offset: %s x10...", dir_name);
+        set_note(start_note);
+
+        for (int rev = 1; rev <= 10; ++rev) {
+            for (int q = 1; q <= 4; ++q) {
+                const double th = chassis.getPose().theta;
+                drive.turn(th + step_deg, 80, 4000, false);
+                drive.waitUntilDone();
+                log_rev(rev, q);
+            }
+            char note[64];
+            std::snprintf(note, sizeof(note), "offset %s %d/10", dir_name, rev);
+            set_note(note);
+        }
+
+        offset_running_ = false;
+        set_note(sd_log::card_present() ? "findingOffset.csv done" : "spins done (no SD)");
+    });
 }
 
 void PidTuner::step_field(int direction) {
@@ -205,8 +353,16 @@ void PidTuner::on_action_event(lv_event_t* event) {
         case ACT_PRINT: self->print_now(); break;
         case ACT_CONTROLLER: self->toggle_controller_mode(); break;
         case ACT_POSE0: self->zero_pose(); break;
-        case ACT_FIELD_PREV: self->step_field(-1); break;
-        case ACT_FIELD_NEXT: self->step_field(+1); break;
+        case ACT_OFFSET_CCW: self->run_offset_spins(+1); break;
+        case ACT_OFFSET_CW: self->run_offset_spins(-1); break;
+        case ACT_FIELD_PREV:
+            self->step_field(-1);
+            self->zero_pose();
+            break;
+        case ACT_FIELD_NEXT:
+            self->step_field(+1);
+            self->zero_pose();
+            break;
         default: break;
     }
 }
@@ -227,8 +383,14 @@ void PidTuner::refresh() {
         lv_label_set_text(value_label_, buf);
     }
     if (live_ != nullptr) {
-        std::snprintf(buf, sizeof(buf), "err drive %+.2f in  turn %+.1f deg%s", drive.drive_pid().error,
-                      drive.turn_pid().error, controller_mode_ ? "  CTRL" : "");
+        const lemlib::Pose pose = chassis.getPose();
+        if (has_drive_sample_) {
+            std::snprintf(buf, sizeof(buf), "imu %+.1f odom %+.1f dI%+.2f dO%+.2f", last_imu_heading_,
+                          last_odom_theta_, last_imu_delta_, last_odom_delta_);
+        } else {
+            std::snprintf(buf, sizeof(buf), "imu %+.1f odom %+.1f eD%+.2f eT%+.1f", imu.get_heading(), pose.theta,
+                          drive.drive_pid().error, drive.turn_pid().error);
+        }
         lv_label_set_text(live_, buf);
     }
     if (note_ != nullptr && note_dirty_) {
@@ -297,13 +459,15 @@ void PidTuner::start() {
 
     add_action("+12in", ACT_DRIVE_POS, 8, 152, 72);
     add_action("-12in", ACT_DRIVE_NEG, 88, 152, 72);
-    add_action("+90", ACT_TURN_POS, 168, 152, 56);
-    add_action("-90", ACT_TURN_NEG, 232, 152, 56);
+    add_action("h+90", ACT_TURN_POS, 168, 152, 56);
+    add_action("h-90", ACT_TURN_NEG, 232, 152, 56);
     add_action("Print", ACT_PRINT, 296, 152, 64);
 
     // Single action row — Pose0 stays above robodash chrome and remains tappable.
-    add_action("Ctrl", ACT_CONTROLLER, 8, 188, 72);
-    add_action("Pose0", ACT_POSE0, 88, 188, 72);
+    add_action("Ctrl", ACT_CONTROLLER, 8, 188, 56);
+    add_action("Pose0", ACT_POSE0, 72, 188, 56);
+    add_action("L10", ACT_OFFSET_CCW, 136, 188, 48);
+    add_action("R10", ACT_OFFSET_CW, 192, 188, 48);
 
     note_ = lv_label_create(parent);
     if (note_ != nullptr) {
@@ -312,7 +476,7 @@ void PidTuner::start() {
         style_label(note_);
     }
 
-    lv_timer_create(on_timer, 100, this);
+    timer_ = lv_timer_create(on_timer, 100, this);
     refresh();
 }
 
@@ -323,33 +487,75 @@ void PidTuner::toggle_controller_mode() {
     note_dirty_ = true;
 }
 
-bool PidTuner::suppress_arcade() const { return controller_mode_ || drive.is_busy(); }
+void PidTuner::force_off() {
+    if (offset_running_) {
+        drive.cancel_movement();
+        offset_running_ = false;
+    }
+    if (controller_mode_) {
+        controller_mode_ = false;
+        drive.cancel_movement();
+        set_note("tuner off (field control)");
+    }
+}
+
+void PidTuner::release_ui() {
+    force_off();
+    if (timer_ != nullptr) {
+        lv_timer_del(timer_);
+        timer_ = nullptr;
+    }
+    if (view_ != nullptr) {
+        rd_view_del(view_);
+        view_ = nullptr;
+    }
+    field_label_ = nullptr;
+    value_label_ = nullptr;
+    live_ = nullptr;
+    note_ = nullptr;
+    started_ = false;
+    g_action_count = 0;
+}
+
+bool PidTuner::suppress_arcade() const { return controller_mode_ || drive.is_busy() || offset_running_; }
 
 void PidTuner::format_controller(char line0[32], char line1[32], char line2[32]) const {
     std::snprintf(line0, 32, "%s %.3g", field_name(field_), field_value(field_));
-    std::snprintf(line1, 32, "e %+.2f %+.1f", drive.drive_pid().error, drive.turn_pid().error);
-    std::snprintf(line2, 32, "睇Github");
+    if (has_drive_sample_) {
+        std::snprintf(line1, 32, "dI%+.1f dO%+.1f", last_imu_delta_, last_odom_delta_);
+    } else {
+        std::snprintf(line1, 32, "imu%+.1f o%+.1f", imu.get_heading(), chassis.getPose().theta);
+    }
+    std::snprintf(line2, 32, "L2/R2 10spin");
 }
 
 void PidTuner::handle_controller(pros::Controller& controller) {
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_X) &&
-        !controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
-        toggle_controller_mode();
-        controller.rumble(".");
+    // Exit on X alone. Enter is X+A in opcontrol — never bind drive to A.
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_X)) {
+        if (!controller.get_digital(pros::E_CONTROLLER_DIGITAL_A)) {
+            toggle_controller_mode();
+            controller.rumble(".");
+        }
         return;
     }
+    if (offset_running_) return;
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_LEFT)) {
         field_ = (field_ + F_COUNT - 1) % F_COUNT;
+        zero_pose();
     }
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_RIGHT)) { field_ = (field_ + 1) % F_COUNT; }
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_RIGHT)) {
+        field_ = (field_ + 1) % F_COUNT;
+        zero_pose();
+    }
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_UP)) bump(field_, +1);
     if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_DOWN)) bump(field_, -1);
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) test_drive(12);
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_B)) test_turn(90);
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_Y)) print_now();
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) test_drive(-12);
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) test_turn(-90);
-    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) zero_pose();
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_A)) zero_pose();
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_B)) test_drive(12);
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_Y)) test_drive(-12);
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L1)) test_turn(-90);
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R1)) test_turn(90);
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_L2)) run_offset_spins(+1); // left / CCW
+    if (controller.get_digital_new_press(pros::E_CONTROLLER_DIGITAL_R2)) run_offset_spins(-1); // right / CW
 }
 
 } // namespace ez_compat
