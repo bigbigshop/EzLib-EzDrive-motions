@@ -8,27 +8,33 @@
 
 `main.h` 引入 `lemlib/api.hpp` 與 `ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
 
-此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` heap **32KB**；256KB 實驗曾 blank／OOM，已回退）。
+此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` heap **128KB** softfp；須同步 `lv_conf.h`，改 header 不夠）。
 
 舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表）已過期。
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | 目前主線（32KB LVGL、SD CSV、動畫、場控 teardown、cos `getRealPose`） |
-| `LVGL-32KB-HEAP` | 加大 heap 前的穩定快照（32KB `liblvgl.a`） |
-| tag `pre-lvgl-heap-bump` | 與上相同時間點，方便 `git checkout` 回退 |
+| `main` | 目前主線（128KB LVGL softfp、SD CSV、動畫、場控 teardown、cos `getRealPose`） |
+| `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 32KB 穩定快照（出事可回退 `.a` + `lv_conf.h`） |
+| `lvgl-128k-heap` | 早期 128→256KB 實驗分支（歷史參考） |
 
 ---
 
 ## Changelog
 
+### 2026-10-26 — LVGL heap 128KB（softfp rebuild）
+
+- 由 [purduesigbots/liblvgl](https://github.com/purduesigbots/liblvgl) 重建 `firmware/liblvgl.a`：`LV_MEM_SIZE=128KB` + `-mfloat-abi=softfp`（對齊本專案 `common.mk`）。
+- 同步 `include/liblvgl/lv_conf.h`。驗證：`lv_mem.o` BSS ≈ 131KB、`work_mem` = `0x20000`。
+- 回退：`git checkout pre-lvgl-heap-bump -- firmware/liblvgl.a include/liblvgl/lv_conf.h` 再 `pros make clean && pros make`。
+
 ### 2026-10-26 — Console 穩定 + `getRealPose` heading cos
 
-- **LVGL 回 32KB**：`LV_MEM_SIZE`／`liblvgl.a` 由 256KB 退回（大 heap 易 blank）。
 - **Console prefetch 修補**：唔再用 robodash `Console::printf`（內部 buffer ≈ `sizeof(std::string)`，長行 stack overflow → prefetch `0x0`）；改 `snprintf` + `println`。排版改固定欄位（POSE／DRIVE／MECH／DIST）。
 - **Boot／tuner**：controller 即時 boot 字；PID page 延遲啟動；CSV `drive_tick`／`turn_tick` ~15ms。
 - **`get_kf_dist`**：唔再 return `-1`；壞讀數 → `999` 或上一格 filter。
 - **`getRealPose` heading**：用而家 `chassis` θ + sensor mount 做 **cos 投影**（`actual_perp = actual × cos(α)`），小角度唔使次次 `wallReset`；`|α|>25°`／低 conf 回 `expected`；correction clamp ±6"。**仍然唔使 CAD offset**（`golden` 包晒）。
+- （同日稍早曾短暫退回 32KB；之後按正確 softfp 流程再上 128KB。）
 
 ### 2026-10-24 — README：reset／宣告／monitor／RW 對比
 
@@ -492,12 +498,10 @@ L2/R2 十圈測試。欄位：
 | --- | --- |
 | 設定 | `include/liblvgl/lv_conf.h` → `LV_MEM_SIZE` |
 | 實池 | 必須編進 `firmware/liblvgl.a`（改 header 不夠） |
-| 目前 `main` | **256KB**，`-mfloat-abi=softfp`（與本專案 `common.mk` 一致） |
-| 回退 | `git checkout LVGL-32KB-HEAP` 或 tag `pre-lvgl-heap-bump` |
+| 目前 `main` | **128KB**，`-mfloat-abi=softfp`（與本專案 `common.mk` 一致） |
+| 回退 | `git checkout pre-lvgl-heap-bump -- firmware/liblvgl.a include/liblvgl/lv_conf.h` |
 
-Console（練習場）會印 `LVGL %used / free B`，方便確認是否接近 OOM。
-
-紅 mon 多為 LVGL object 過多／碎裂；加大 heap 降低機會，但仍應避免一次建立大量全屏 Image view。
+上 Brain 後應確認 heap `total` 約 **128KB**。紅 mon 多為 LVGL object 過多／碎裂；加大 heap 降低機會，但仍應避免一次建立大量全屏 Image view。
 
 ---
 
@@ -516,6 +520,6 @@ Console（練習場）會印 `LVGL %used / free B`，方便確認是否接近 OO
 | ±12in IMU／odom 顯示與記錄 | ✓ |
 | robot01–10 單 view 動畫 | ✓ |
 | 場控 teardown UI | ✓ |
-| LVGL 256KB heap | ✓（`main`） |
+| LVGL 128KB heap（softfp） | ✓（`main`） |
 | SD 卡直接播 PNG/JPG | ✗（須 converter） |
 | RW 式絕對場地 distance reset / MCL | 未內建（可對照 [RW-Template](https://github.com/richardbwang/RW-Template)） |

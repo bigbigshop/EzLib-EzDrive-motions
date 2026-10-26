@@ -46,6 +46,7 @@
 #include "relocate.hpp"
 #include "customs/controls.hpp"
 #include "customs/monitor.hpp"
+#include "customs/boot_log.hpp"
 #include "robodash/api.h"
 //#include "wkf.hpp"
 #include "customs/fsm.hpp"

@@ -114,6 +114,8 @@ ez_compat::PidTuner pidTuner(ezPID);
  */
 
 void initialize() {
+    boot_log::log("initialize:enter");
+    boot_log::lvgl("init0");
     //pros::lcd::initialize(); // initialize brain screen
     /*
     imu.reset(); // reset imu to 0 degrees
@@ -130,7 +132,9 @@ void initialize() {
     controller.print(1, 0, "%-15.15s", "calibrating...");
     pros::delay(50);
     controller.rumble(".");
+    boot_log::log("initialize:before calibrate");
     chassis.calibrate(); // calibrate sensors (IMU — keep robot still)
+    boot_log::log("initialize:after calibrate");
     controller.print(1, 0, "%-15.15s", "calibrated OK");
     pros::delay(50);
     controller.print(2, 0, "%-15.15s", "ready");
@@ -206,6 +210,7 @@ void initialize() {
     */
    
     // UI 任務（圖片動畫 + controller 文字分頁）見 customs/monitor.cpp
+    boot_log::log("initialize:spawn uiTask");
     pros::Task uiTask(uiTask_fn);
 
     pros::Task intakeTask([]{
@@ -214,6 +219,8 @@ void initialize() {
             pros::delay(20);
         }
     });
+    boot_log::log("initialize:exit");
+    boot_log::lvgl("init_done");
 }
 
 /**
@@ -251,11 +258,15 @@ void autonomous() {
  * Runs in driver control
  */
 void opcontrol() {
+    boot_log::log("opcontrol:enter");
+    boot_log::lvgl("op_enter");
     console.focus();
     // Light telemetry (slower refresh in telemetry_fn) — safe on 32KB LVGL.
     pros::Task my_telemetry_task(telemetry_fn);
+    boot_log::log("opcontrol:telemetry spawned");
 
     while (true) {
+        boot_log::heartbeat("opcontrol");
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
 
         // Field control: tear down Anim + PID pages once (see telemetry_fn edge).

@@ -1,5 +1,6 @@
 #include "main.h"
 #include "customs/monitor.hpp"
+#include "customs/boot_log.hpp"
 #include "pid_tuner.hpp"
 
 #include <cstdio>
@@ -30,6 +31,69 @@ lv_obj_t* anim_img = nullptr;
 int anim_frame = 0;
 uint32_t last_frame_ms = 0;
 bool anim_was_on = false;
+
+// Robodash top-right view-menu button (32×32 @ TOP_RIGHT). Replace stack icon
+// with a blinking red status dot — no public robodash API for this.
+lv_obj_t* view_menu_dot = nullptr;
+lv_timer_t* view_menu_blink_timer = nullptr;
+bool view_menu_dot_ready = false;
+
+lv_obj_t* find_robodash_views_btn() {
+    lv_obj_t* scr = lv_scr_act();
+    if (scr == nullptr) return nullptr;
+    const uint32_t n = lv_obj_get_child_cnt(scr);
+    for (uint32_t i = 0; i < n; ++i) {
+        lv_obj_t* ch = lv_obj_get_child(scr, i);
+        if (ch == nullptr) continue;
+        if (lv_obj_get_width(ch) != 32 || lv_obj_get_height(ch) != 32) continue;
+        // core.cpp: align TOP_RIGHT, -4, 4 → roughly x≈444, y≈4 on 480×240
+        if (lv_obj_get_x(ch) < 430 || lv_obj_get_y(ch) > 12) continue;
+        return ch;
+    }
+    return nullptr;
+}
+
+void view_menu_blink_cb(lv_timer_t* timer) {
+    lv_obj_t* dot = static_cast<lv_obj_t*>(timer->user_data);
+    if (dot == nullptr) return;
+    const lv_opa_t cur = lv_obj_get_style_bg_opa(dot, 0);
+    lv_obj_set_style_bg_opa(dot, cur > LV_OPA_50 ? LV_OPA_30 : LV_OPA_COVER, 0);
+}
+
+bool ensure_view_menu_blink_dot() {
+    if (view_menu_dot != nullptr) return true;
+
+    lv_obj_t* btn = find_robodash_views_btn();
+    if (btn == nullptr) return false;
+    view_menu_dot_ready = true; // found chrome; don't keep scanning every frame
+
+    // Hide stock stack / symbol children; keep the button for clicks.
+    const uint32_t n = lv_obj_get_child_cnt(btn);
+    for (uint32_t i = 0; i < n; ++i) {
+        lv_obj_t* ch = lv_obj_get_child(btn, i);
+        if (ch != nullptr) lv_obj_add_flag(ch, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Soften chrome so the red dot reads clearly.
+    lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
+
+    view_menu_dot = lv_obj_create(btn);
+    if (view_menu_dot == nullptr) return false;
+    lv_obj_set_size(view_menu_dot, 14, 14);
+    lv_obj_set_style_radius(view_menu_dot, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(view_menu_dot, lv_color_hex(0xE53935), 0);
+    lv_obj_set_style_bg_opa(view_menu_dot, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(view_menu_dot, 0, 0);
+    lv_obj_set_style_pad_all(view_menu_dot, 0, 0);
+    lv_obj_clear_flag(view_menu_dot, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_clear_flag(view_menu_dot, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_align(view_menu_dot, LV_ALIGN_CENTER, 0, 0);
+
+    view_menu_blink_timer = lv_timer_create(view_menu_blink_cb, 450, view_menu_dot);
+    return true;
+}
 
 bool ensure_anim_view() {
     if (anim_view != nullptr && anim_img != nullptr) return true;
@@ -87,10 +151,12 @@ void destroy_robot_anim() {
 }
 
 void uiTask_fn() {
+    boot_log::log("uiTask:enter");
     // Controller lines start quickly; PID page waits so boot stays responsive.
     pros::delay(200);
     const uint32_t boot_ms = pros::millis();
     bool pid_started = false;
+    boot_log::log("uiTask:loop");
 
     uint32_t lastControllerTime = 0;
     static char pending[3][32] = {};
@@ -103,12 +169,24 @@ void uiTask_fn() {
 
     while (true) {
         uint32_t now = pros::millis();
+        // After robodash chrome exists, swap top-right stack icon → blinking red dot.
+        if (view_menu_dot == nullptr && (now - boot_ms) >= 400 && (now - boot_ms) < 8000) {
+            if (ensure_view_menu_blink_dot()) {
+                boot_log::log("uiTask:view_menu_dot ok");
+                boot_log::lvgl("after_dot");
+            }
+        }
         if (!pid_started && !pros::competition::is_connected() && (now - boot_ms) >= 1500) {
+            boot_log::log("uiTask:pidTuner.start begin");
+            boot_log::lvgl("before_pid");
             pidTuner.start();
             pid_started = true;
+            boot_log::log("uiTask:pidTuner.start done");
+            boot_log::lvgl("after_pid");
         }
         // Robot anim disabled at boot path; still gated by autoChange inside.
         tick_robot_anim(now);
+        boot_log::heartbeat("uiTask");
 
         // Controller text. Print a changed line only — never clear() on a timer.
         if (now - lastControllerTime > 60) {
@@ -185,8 +263,11 @@ int get_safe_conf(pros::Distance& s) {
 }
 
 void telemetry_fn() {
+    boot_log::log("telemetry:enter");
     // Let boot + robodash settle before first clear (32KB LVGL).
     pros::delay(1500);
+    boot_log::log("telemetry:refresh loop");
+    boot_log::lvgl("telem_start");
 
     // NEVER use rd::Console::printf for long lines — its template buffer is
     // sizeof(std::string)+argc (~30B), so sprintf overflows → prefetch 0x0.
@@ -198,21 +279,26 @@ void telemetry_fn() {
 
     static bool was_field = false;
     while (true) {
+        boot_log::heartbeat("telemetry");
         const bool field = pros::competition::is_connected();
         // Field control: stop hammering Console (temps / distance) — big LVGL churn.
         if (field) {
             if (!was_field) {
                 was_field = true;
+                boot_log::log("telemetry:field on — teardown UI");
                 destroy_robot_anim();
                 pidTuner.release_ui(); // delete PID page — reclaim LVGL heap
                 selector.focus();
+                boot_log::lvgl("field_teardown");
             }
             pros::delay(200);
             continue;
         }
         if (was_field) {
             was_field = false;
+            boot_log::log("telemetry:field off — pidTuner.start");
             pidTuner.start(); // recreate PID page after leaving field control
+            boot_log::lvgl("field_restore");
         }
 
         const auto pose = chassis.getPose();
@@ -229,10 +315,16 @@ void telemetry_fn() {
             return static_cast<long>(d == PROS_ERR ? -1 : d);
         };
 
+        lv_mem_monitor_t mon{};
+        lv_mem_monitor(&mon);
+        const uint32_t used = mon.total_size - mon.free_size;
+
         // Fixed-width columns (monospace-ish). Keep line count low for LVGL.
         console.clear();
         out("POSE   X %6.2f   Y %6.2f   T %5.1f", pose.x, pose.y, pose.theta);
         out("PATH   traveled %6.2f in", ezPID.get_traveled());
+        out("LVGL   %lu/%lu B  frag %u%%", static_cast<unsigned long>(used),
+            static_cast<unsigned long>(mon.total_size), static_cast<unsigned>(mon.frag_pct));
         out("--------------------------------");
         out("DRIVE  LF LM LB | RF RM RB");
         out(" C    %3.0f%3.0f%3.0f |%3.0f%3.0f%3.0f", leftMotors.get_temperature(0),
