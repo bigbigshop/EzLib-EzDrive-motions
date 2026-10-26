@@ -1,6 +1,8 @@
 #include "main.h"
 #include "customs/monitor.hpp"
 #include "customs/boot_log.hpp"
+#include "customs/telem_dash.hpp"
+#include "customs/ui_pages.hpp"
 #include "pid_tuner.hpp"
 
 #include <cstdio>
@@ -155,7 +157,6 @@ void uiTask_fn() {
     // Controller lines start quickly; PID page waits so boot stays responsive.
     pros::delay(200);
     const uint32_t boot_ms = pros::millis();
-    bool pid_started = false;
     boot_log::log("uiTask:loop");
 
     uint32_t lastControllerTime = 0;
@@ -176,14 +177,7 @@ void uiTask_fn() {
                 boot_log::lvgl("after_dot");
             }
         }
-        if (!pid_started && !pros::competition::is_connected() && (now - boot_ms) >= 1500) {
-            boot_log::log("uiTask:pidTuner.start begin");
-            boot_log::lvgl("before_pid");
-            pidTuner.start();
-            pid_started = true;
-            boot_log::log("uiTask:pidTuner.start done");
-            boot_log::lvgl("after_pid");
-        }
+        // PID is NOT auto-started — mutually exclusive with Dash (X+A / Dash PID btn).
         // Robot anim disabled at boot path; still gated by autoChange inside.
         tick_robot_anim(now);
         boot_log::heartbeat("uiTask");
@@ -254,40 +248,25 @@ void uiTask_fn() {
     }
 }
 
-int get_safe_conf(pros::Distance& s) {
-    int32_t conf = s.get_confidence();
-    if (conf == PROS_ERR || conf < 0 || conf > 100) {
-        return 0;
-    }
-    return conf;
-}
-
 void telemetry_fn() {
     boot_log::log("telemetry:enter");
-    // Let boot + robodash settle before first clear (32KB LVGL).
-    pros::delay(1500);
-    boot_log::log("telemetry:refresh loop");
-    boot_log::lvgl("telem_start");
-
-    // NEVER use rd::Console::printf for long lines — its template buffer is
-    // sizeof(std::string)+argc (~30B), so sprintf overflows → prefetch 0x0.
-    char line[128];
-    auto out = [&](const char* fmt, auto... args) {
-        std::snprintf(line, sizeof(line), fmt, args...);
-        console.println(line);
-    };
+    // Let boot + robodash settle; then Dash only (PID on demand).
+    pros::delay(1200);
+    boot_log::log("telemetry:show_dash");
+    ui_pages::show_dash();
+    boot_log::lvgl("telem_dash_ready");
 
     static bool was_field = false;
     while (true) {
         boot_log::heartbeat("telemetry");
         const bool field = pros::competition::is_connected();
-        // Field control: stop hammering Console (temps / distance) — big LVGL churn.
         if (field) {
             if (!was_field) {
                 was_field = true;
                 boot_log::log("telemetry:field on — teardown UI");
                 destroy_robot_anim();
-                pidTuner.release_ui(); // delete PID page — reclaim LVGL heap
+                telem_dash::release();
+                pidTuner.release_ui();
                 selector.focus();
                 boot_log::lvgl("field_teardown");
             }
@@ -296,52 +275,15 @@ void telemetry_fn() {
         }
         if (was_field) {
             was_field = false;
-            boot_log::log("telemetry:field off — pidTuner.start");
-            pidTuner.start(); // recreate PID page after leaving field control
+            boot_log::log("telemetry:field off — restore Dash");
+            ui_pages::show_dash();
             boot_log::lvgl("field_restore");
         }
 
-        const auto pose = chassis.getPose();
-        const float F_dist = static_cast<float>(get_kf_dist(dist_front));
-        const float B_dist = static_cast<float>(get_kf_dist(dist_back));
-        const float L_dist = static_cast<float>(get_kf_dist(dist_left));
-        const float R_dist = static_cast<float>(get_kf_dist(dist_right));
-        const int f_conf = get_safe_conf(dist_front);
-        const int b_conf = get_safe_conf(dist_back);
-        const int l_conf = get_safe_conf(dist_left);
-        const int r_conf = get_safe_conf(dist_right);
-        auto raw_mm = [](pros::Distance& s) -> long {
-            const int32_t d = s.get_distance();
-            return static_cast<long>(d == PROS_ERR ? -1 : d);
-        };
-
-        lv_mem_monitor_t mon{};
-        lv_mem_monitor(&mon);
-        const uint32_t used = mon.total_size - mon.free_size;
-
-        // Fixed-width columns (monospace-ish). Keep line count low for LVGL.
-        console.clear();
-        out("POSE   X %6.2f   Y %6.2f   T %5.1f", pose.x, pose.y, pose.theta);
-        out("PATH   traveled %6.2f in", ezPID.get_traveled());
-        out("LVGL   %lu/%lu B  frag %u%%", static_cast<unsigned long>(used),
-            static_cast<unsigned long>(mon.total_size), static_cast<unsigned>(mon.frag_pct));
-        out("--------------------------------");
-        out("DRIVE  LF LM LB | RF RM RB");
-        out(" C    %3.0f%3.0f%3.0f |%3.0f%3.0f%3.0f", leftMotors.get_temperature(0),
-            leftMotors.get_temperature(1), leftMotors.get_temperature(2),
-            rightMotors.get_temperature(0), rightMotors.get_temperature(1),
-            rightMotors.get_temperature(2));
-        out("MECH   InL InR  LoR HiR");
-        out(" C    %3.0f %3.0f  %3.0f %3.0f", left_intake.get_temperature(),
-            right_intake.get_temperature(), low_roller.get_temperature(),
-            high_roller.get_temperature());
-        out("--------------------------------");
-        out("DIST      in   c    mm");
-        out(" F     %5.1f  %2d  %4ld", F_dist, f_conf, raw_mm(dist_front));
-        out(" B     %5.1f  %2d  %4ld", B_dist, b_conf, raw_mm(dist_back));
-        out(" L     %5.1f  %2d  %4ld", L_dist, l_conf, raw_mm(dist_left));
-        out(" R     %5.1f  %2d  %4ld", R_dist, r_conf, raw_mm(dist_right));
-
-        pros::delay(120);
+        // While PID owns the screen, skip Dash refresh (page released).
+        if (telem_dash::ready()) {
+            telem_dash::refresh();
+        }
+        pros::delay(150);
     }
 }

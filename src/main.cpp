@@ -1,4 +1,6 @@
 #include "main.h"
+#include "customs/telem_dash.hpp"
+#include "customs/ui_pages.hpp"
 #include "lemlib/api.hpp" // IWYU pragma: keep
 #include "pid_tuner.hpp"
 #include <cmath>
@@ -260,8 +262,8 @@ void autonomous() {
 void opcontrol() {
     boot_log::log("opcontrol:enter");
     boot_log::lvgl("op_enter");
-    console.focus();
-    // Light telemetry (slower refresh in telemetry_fn) — safe on 32KB LVGL.
+    // Dash is created in telemetry_fn after settle; focus when ready / on DOWN.
+    // Light telemetry — Dash labels only (128KB LVGL).
     pros::Task my_telemetry_task(telemetry_fn);
     boot_log::log("opcontrol:telemetry spawned");
 
@@ -340,7 +342,7 @@ void opcontrol() {
             }
 
             if (controller.get_digital(DIGITAL_B) && controller.get_digital(DIGITAL_DOWN)) {
-                console.focus();
+                ui_pages::show_dash();
                 autonomous();
             }
             if (controller.get_digital(DIGITAL_Y) && controller.get_digital(DIGITAL_DOWN)) {                
@@ -360,7 +362,7 @@ void opcontrol() {
             }
             if(controller.get_digital(DIGITAL_DOWN)) {
                 //chassis.setPose(0, 0, 0);
-                console.focus();
+                ui_pages::show_dash(); // also drops PID page (mutex)
                 autoChange = false;
             }            
         }        

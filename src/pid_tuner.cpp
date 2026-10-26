@@ -2,6 +2,8 @@
 #include "customs/monitor.hpp"
 #include "customs/objDeclare.hpp"
 #include "customs/sd_log.hpp"
+#include "customs/telem_dash.hpp"
+#include "customs/ui_pages.hpp"
 
 #include "pros/rtos.hpp"
 
@@ -452,13 +454,18 @@ void PidTuner::refresh() {
 
 void PidTuner::start() {
     if (started_) return;
+    // Mutual exclusion with Dash — only one heavy page in LVGL heap.
+    telem_dash::release();
     started_ = true;
     g_action_count = 0;
 
     // Compact UI only — two-column grid OOMs the 32KB LVGL heap (pc:3807204 /
     // lv_obj_class_create_obj). Long field names still show on the active row.
     view_ = rd_view_create("PID");
-    if (view_ == nullptr) return;
+    if (view_ == nullptr) {
+        started_ = false;
+        return;
+    }
     rd_view_set_anims(view_, RD_ANIM_OFF);
     lv_obj_t* parent = rd_view_obj(view_);
     if (parent == nullptr) return;
@@ -531,11 +538,22 @@ void PidTuner::start() {
     refresh();
 }
 
+void PidTuner::focus() {
+    if (view_ != nullptr) rd_view_focus(view_);
+}
+
 void PidTuner::toggle_controller_mode() {
     controller_mode_ = !controller_mode_;
-    if (controller_mode_) drive.cancel_movement();
-    std::snprintf(note_text_, sizeof(note_text_), controller_mode_ ? "controller tuner on" : "controller tuner off");
-    note_dirty_ = true;
+    if (controller_mode_) {
+        drive.cancel_movement();
+        ui_pages::show_pid(); // drop Dash, ensure PID view
+        std::snprintf(note_text_, sizeof(note_text_), "controller tuner on");
+        note_dirty_ = true;
+    } else {
+        std::snprintf(note_text_, sizeof(note_text_), "controller tuner off");
+        note_dirty_ = true;
+        ui_pages::show_dash(); // release PID page
+    }
 }
 
 void PidTuner::force_off() {

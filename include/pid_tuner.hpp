@@ -15,6 +15,8 @@ class PidTuner {
         explicit PidTuner(EzDrive& drive) : drive(drive) {}
 
         void start();
+        void focus(); // rd_view_focus PID page (no-op if not started)
+        bool alive() const { return view_ != nullptr; }
         bool controller_mode() const { return controller_mode_; }
         void toggle_controller_mode();
         // Stop controller mode / offset spins (keeps PID page alive).
