@@ -1,12 +1,15 @@
 #include "customs/telem_dash.hpp"
 
 #include "customs/boot_log.hpp"
+#include "customs/dash_hardware_config.hpp"
 #include "customs/objDeclare.hpp"
 #include "customs/ui_pages.hpp"
 #include "main.h"
+#include "pros/motors.h"
 #include "robodash/api.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
@@ -35,10 +38,15 @@ lv_obj_t* pose_y_ = nullptr;
 lv_obj_t* pose_t_ = nullptr;
 lv_obj_t* path_vals_ = nullptr;
 
-lv_obj_t* dist_f_ = nullptr;
-lv_obj_t* dist_b_ = nullptr;
-lv_obj_t* dist_l_ = nullptr;
-lv_obj_t* dist_r_ = nullptr;
+// Compact DIST value labels — only for configured (non-null) sensors.
+constexpr std::size_t kMaxDistUi = 4;
+struct DistUi {
+    pros::Distance* sensor = nullptr;
+    lv_obj_t* lab = nullptr;
+    char cache[28] = {};
+};
+DistUi dist_ui_[kMaxDistUi] = {};
+std::size_t dist_ui_n_ = 0;
 
 lv_obj_t* drive_vals_ = nullptr;
 lv_obj_t* mech_vals_ = nullptr;
@@ -50,12 +58,8 @@ char cache_px_[24] = {};
 char cache_py_[24] = {};
 char cache_pt_[24] = {};
 char cache_path_[32] = {};
-char cache_df_[28] = {};
-char cache_db_[28] = {};
-char cache_dl_[28] = {};
-char cache_dr_[28] = {};
-char cache_drive_[48] = {};
-char cache_mech_[40] = {};
+char cache_drive_[72] = {};
+char cache_mech_[64] = {};
 
 void style_text(lv_obj_t* lab, lv_color_t color) {
     if (lab == nullptr) return;
@@ -116,6 +120,60 @@ lv_color_t conf_color(int c) {
 void on_pid_btn(lv_event_t* e) {
     (void)e;
     ui_pages::show_pid();
+}
+
+std::size_t count_motors(dash_hw::TempGroup group) {
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < dash_hw::kMotorTempCount; ++i) {
+        if (dash_hw::kMotorTemps[i].group == group) ++n;
+    }
+    return n;
+}
+
+bool temp_ok(double t) { return std::isfinite(t) && t >= 0.0 && t < 100.0; }
+
+// One compact label per group (heap-friendly). Drive inserts '|' at left/right midpoint.
+void format_motor_temps(char* out, std::size_t out_n, dash_hw::TempGroup group, double& max_t) {
+    max_t = 0.0;
+    if (out == nullptr || out_n == 0) return;
+    out[0] = '\0';
+
+    const std::size_t group_n = count_motors(group);
+    const std::size_t mid =
+        (group == dash_hw::TempGroup::Drive && group_n > 1) ? (group_n / 2) : 0;
+
+    std::size_t used = 0;
+    std::size_t idx = 0;
+    for (std::size_t i = 0; i < dash_hw::kMotorTempCount; ++i) {
+        const auto& slot = dash_hw::kMotorTemps[i];
+        if (slot.group != group || slot.tag == nullptr) continue;
+
+        if (mid > 0 && idx == mid && used + 3 < out_n) {
+            used += static_cast<std::size_t>(std::snprintf(out + used, out_n - used, " |"));
+        }
+
+        const double t = pros::c::motor_get_temperature(slot.port);
+        if (temp_ok(t) && t > max_t) max_t = t;
+
+        const char* sep = (used == 0) ? "" : " ";
+        int wrote = 0;
+        if (temp_ok(t)) {
+            // tag + width-3 temp => "LF 35" / "LF100"
+            wrote = std::snprintf(out + used, out_n - used, "%s%s%3.0f", sep, slot.tag, t);
+        } else {
+            wrote = std::snprintf(out + used, out_n - used, "%s%s --", sep, slot.tag);
+        }
+        if (wrote < 0) break;
+        used += static_cast<std::size_t>(wrote);
+        if (used >= out_n) {
+            out[out_n - 1] = '\0';
+            break;
+        }
+        ++idx;
+    }
+    if (idx == 0) {
+        std::snprintf(out, out_n, "--");
+    }
 }
 
 } // namespace
@@ -188,33 +246,46 @@ void start() {
         pose_x_ = make_label(pose_card, "---.--", 36, 22, col_text(), &lv_font_montserrat_20);
         pose_y_ = make_label(pose_card, "---.--", 36, 50, col_text(), &lv_font_montserrat_20);
         pose_t_ = make_label(pose_card, "---.-", 36, 78, col_accent(), &lv_font_montserrat_20);
-        path_vals_ = make_label(pose_card, "path ---.-- in", 12, 106, col_muted(), &lv_font_montserrat_12);
+        path_vals_ = make_label(pose_card, "traveled: --.-- in", 12, 106, col_muted(), &lv_font_montserrat_12);
     }
 
-    // —— Dist 2×2 (right) ——
+    // —— Dist (right): only create cells for configured sensors ——
     lv_obj_t* dist_card = make_card(parent, 248, 30, 224, 128, col_card());
+    dist_ui_n_ = 0;
     if (dist_card != nullptr) {
         make_label(dist_card, "DIST", 12, 6, col_muted(), &lv_font_montserrat_12);
 
-        auto cell = [&](const char* tag, lv_coord_t x, lv_coord_t y, lv_obj_t*& out) {
-            lv_obj_t* box = make_card(dist_card, x, y, 100, 44, col_card2());
-            if (box == nullptr) return;
-            make_label(box, tag, 8, 4, col_muted(), &lv_font_montserrat_12);
-            out = make_label(box, "--.-", 8, 20, col_text(), &lv_font_montserrat_16);
+        static constexpr lv_coord_t kCellPos[kMaxDistUi][2] = {
+            {10, 28},
+            {114, 28},
+            {10, 76},
+            {114, 76},
         };
-        cell("F", 10, 28, dist_f_);
-        cell("B", 114, 28, dist_b_);
-        cell("L", 10, 76, dist_l_);
-        cell("R", 114, 76, dist_r_);
+
+        for (std::size_t i = 0; i < dash_hw::kDistSlotCount && dist_ui_n_ < kMaxDistUi; ++i) {
+            const auto& slot = dash_hw::kDistSlots[i];
+            if (slot.sensor == nullptr || slot.tag == nullptr) continue;
+
+            const lv_coord_t x = kCellPos[dist_ui_n_][0];
+            const lv_coord_t y = kCellPos[dist_ui_n_][1];
+            lv_obj_t* box = make_card(dist_card, x, y, 100, 44, col_card2());
+            if (box == nullptr) continue;
+            make_label(box, slot.tag, 8, 4, col_muted(), &lv_font_montserrat_12);
+            DistUi& ui = dist_ui_[dist_ui_n_];
+            ui.sensor = slot.sensor;
+            ui.lab = make_label(box, "--.-", 8, 20, col_text(), &lv_font_montserrat_16);
+            ui.cache[0] = '\0';
+            ++dist_ui_n_;
+        }
     }
 
-    // —— Temps ——
+    // —— Temps (tags + values from dash_hw::kMotorTemps) ——
     lv_obj_t* temp_card = make_card(parent, 8, 166, 464, 54, col_card());
     if (temp_card != nullptr) {
         make_label(temp_card, "DRIVE °C", 12, 4, col_muted(), &lv_font_montserrat_12);
-        drive_vals_ = make_label(temp_card, "-- -- -- | -- -- --", 12, 24, col_text(), &lv_font_montserrat_14);
+        drive_vals_ = make_label(temp_card, "--", 12, 24, col_text(), &lv_font_montserrat_12);
         make_label(temp_card, "MECH °C", 280, 4, col_muted(), &lv_font_montserrat_12);
-        mech_vals_ = make_label(temp_card, "In -- --  Ro -- --", 280, 24, col_text(), &lv_font_montserrat_14);
+        mech_vals_ = make_label(temp_card, "--", 280, 24, col_text(), &lv_font_montserrat_12);
     }
 
     boot_log::log("telem_dash:start done");
@@ -228,11 +299,13 @@ void release() {
     view_ = nullptr;
     hdr_auton_ = hdr_batt_ = hdr_lvgl_ = batt_bar_ = nullptr;
     pose_x_ = pose_y_ = pose_t_ = path_vals_ = nullptr;
-    dist_f_ = dist_b_ = dist_l_ = dist_r_ = nullptr;
+    for (std::size_t i = 0; i < kMaxDistUi; ++i) {
+        dist_ui_[i] = DistUi{};
+    }
+    dist_ui_n_ = 0;
     drive_vals_ = mech_vals_ = nullptr;
     cache_auton_[0] = cache_batt_[0] = cache_lvgl_[0] = '\0';
     cache_px_[0] = cache_py_[0] = cache_pt_[0] = cache_path_[0] = '\0';
-    cache_df_[0] = cache_db_[0] = cache_dl_[0] = cache_dr_[0] = '\0';
     cache_drive_[0] = cache_mech_[0] = '\0';
 }
 
@@ -246,7 +319,7 @@ bool ready() { return view_ != nullptr; }
 void refresh() {
     if (view_ == nullptr) return;
 
-    char buf[64];
+    char buf[80];
 
     std::string auton = selector.get_auton()
                             .value_or(rd::Selector::routine_t{"No auton", []() {}})
@@ -283,44 +356,30 @@ void refresh() {
     std::snprintf(buf, sizeof(buf), "%6.1f", pose.theta);
     set_cached(pose_t_, cache_pt_, sizeof(cache_pt_), buf);
 
-    std::snprintf(buf, sizeof(buf), "path %6.2f in", ezPID.get_traveled());
+    std::snprintf(buf, sizeof(buf), "traveled: %5.2f in", ezPID.get_traveled());
     set_cached(path_vals_, cache_path_, sizeof(cache_path_), buf);
 
-    auto fill_dist = [](lv_obj_t* lab, char* cache, std::size_t n, pros::Distance& s, float inches) {
-        const int32_t c = s.get_confidence();
+    for (std::size_t i = 0; i < dist_ui_n_; ++i) {
+        DistUi& ui = dist_ui_[i];
+        if (ui.sensor == nullptr || ui.lab == nullptr) continue;
+        const int32_t c = ui.sensor->get_confidence();
         const int conf = (c == PROS_ERR || c < 0 || c > 100) ? 0 : static_cast<int>(c);
+        const float inches = static_cast<float>(get_kf_dist(*ui.sensor));
         char b[28];
         std::snprintf(b, sizeof(b), "%5.1f  %2d", inches, conf);
-        if (set_cached(lab, cache, n, b) || lab != nullptr) {
-            style_text(lab, conf_color(conf));
-        }
-    };
-    fill_dist(dist_f_, cache_df_, sizeof(cache_df_), dist_front, static_cast<float>(get_kf_dist(dist_front)));
-    fill_dist(dist_b_, cache_db_, sizeof(cache_db_), dist_back, static_cast<float>(get_kf_dist(dist_back)));
-    fill_dist(dist_l_, cache_dl_, sizeof(cache_dl_), dist_left, static_cast<float>(get_kf_dist(dist_left)));
-    fill_dist(dist_r_, cache_dr_, sizeof(cache_dr_), dist_right, static_cast<float>(get_kf_dist(dist_right)));
+        set_cached(ui.lab, ui.cache, sizeof(ui.cache), b);
+        style_text(ui.lab, conf_color(conf));
+    }
 
-    const double lf = leftMotors.get_temperature(0);
-    const double lm = leftMotors.get_temperature(1);
-    const double lb = leftMotors.get_temperature(2);
-    const double rf = rightMotors.get_temperature(0);
-    const double rm = rightMotors.get_temperature(1);
-    const double rb = rightMotors.get_temperature(2);
-    std::snprintf(buf, sizeof(buf), "%3.0f %3.0f %3.0f | %3.0f %3.0f %3.0f", lf, lm, lb, rf, rm, rb);
+    double drive_max = 0.0;
+    format_motor_temps(buf, sizeof(buf), dash_hw::TempGroup::Drive, drive_max);
     set_cached(drive_vals_, cache_drive_, sizeof(cache_drive_), buf);
-    if (drive_vals_ != nullptr) {
-        style_text(drive_vals_, temp_color(std::max({lf, lm, lb, rf, rm, rb})));
-    }
+    if (drive_vals_ != nullptr) style_text(drive_vals_, temp_color(drive_max));
 
-    const double il = left_intake.get_temperature();
-    const double ir = right_intake.get_temperature();
-    const double lo = low_roller.get_temperature();
-    const double hi = high_roller.get_temperature();
-    std::snprintf(buf, sizeof(buf), "In %3.0f %3.0f  Ro %3.0f %3.0f", il, ir, lo, hi);
+    double mech_max = 0.0;
+    format_motor_temps(buf, sizeof(buf), dash_hw::TempGroup::Mech, mech_max);
     set_cached(mech_vals_, cache_mech_, sizeof(cache_mech_), buf);
-    if (mech_vals_ != nullptr) {
-        style_text(mech_vals_, temp_color(std::max({il, ir, lo, hi})));
-    }
+    if (mech_vals_ != nullptr) style_text(mech_vals_, temp_color(mech_max));
 }
 
 } // namespace telem_dash

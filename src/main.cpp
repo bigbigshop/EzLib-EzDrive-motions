@@ -32,9 +32,9 @@ rd::Selector selector({
 
 // controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
-// motor groups
-pros::MotorGroup rightMotors({11, 12, 13},	pros::MotorGearset::blue); // left motor group - ports 3 (reversed), 4, 5 (reversed)
-pros::MotorGroup leftMotors({-14, -15, -16}, pros::MotorGearset::blue); // right motor group - ports 6, 7, 9 (reversed)
+// motor groups — keep ports in sync with dash_hw::kMotorTemps (include/customs/dash_hardware_config.hpp)
+pros::MotorGroup rightMotors({11, 12, 13},	pros::MotorGearset::blue); // right: RF RM RB
+pros::MotorGroup leftMotors({-14, -15, -16}, pros::MotorGearset::blue); // left: LF LM LB
 
 // Inertial Sensor on port 10
 pros::Imu imu(5);
