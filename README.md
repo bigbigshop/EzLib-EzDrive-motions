@@ -8,19 +8,27 @@
 
 `main.h` 引入 `lemlib/api.hpp` 與 `ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
 
-此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` 已重建，heap **256KB**）。
+此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` heap **32KB**；256KB 實驗曾 blank／OOM，已回退）。
 
 舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表）已過期。
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | 目前主線（含 256KB LVGL、SD CSV、動畫、場控 teardown） |
+| `main` | 目前主線（32KB LVGL、SD CSV、動畫、場控 teardown、cos `getRealPose`） |
 | `LVGL-32KB-HEAP` | 加大 heap 前的穩定快照（32KB `liblvgl.a`） |
 | tag `pre-lvgl-heap-bump` | 與上相同時間點，方便 `git checkout` 回退 |
 
 ---
 
 ## Changelog
+
+### 2026-10-26 — Console 穩定 + `getRealPose` heading cos
+
+- **LVGL 回 32KB**：`LV_MEM_SIZE`／`liblvgl.a` 由 256KB 退回（大 heap 易 blank）。
+- **Console prefetch 修補**：唔再用 robodash `Console::printf`（內部 buffer ≈ `sizeof(std::string)`，長行 stack overflow → prefetch `0x0`）；改 `snprintf` + `println`。排版改固定欄位（POSE／DRIVE／MECH／DIST）。
+- **Boot／tuner**：controller 即時 boot 字；PID page 延遲啟動；CSV `drive_tick`／`turn_tick` ~15ms。
+- **`get_kf_dist`**：唔再 return `-1`；壞讀數 → `999` 或上一格 filter。
+- **`getRealPose` heading**：用而家 `chassis` θ + sensor mount 做 **cos 投影**（`actual_perp = actual × cos(α)`），小角度唔使次次 `wallReset`；`|α|>25°`／低 conf 回 `expected`；correction clamp ±6"。**仍然唔使 CAD offset**（`golden` 包晒）。
 
 ### 2026-10-24 — README：reset／宣告／monitor／RW 對比
 
@@ -262,26 +270,44 @@ wallReset('x', -30, 0, 800);
 
 ```cpp
 double getRealPose(double expected, double golden, pros::Distance& sensor, int side);
-// 語意：return expected - (actual - golden) * side
+// 語意：return expected - (actual_perp - golden) * side
+// actual_perp = get_kf_dist × cos(α)；α = beam 與牆法線夾角（來自 chassis θ）
 ```
 
 | 參數 | 意義 |
 | --- | --- |
 | `expected` | 你**預期**此時該軸座標（例：應在 Y=0 附近就傳 `0`） |
-| `golden` | 當機器人**真的停在 expected** 時，感測器應讀到的距離（吋）。在練習場量一次寫死即可 |
+| `golden` | 當機器人**真的停在 expected**（量時盡量正對牆）時，感測器應讀到的距離（吋）。練習場量一次寫死即可——**已包含安裝 offset** |
 | `sensor` | `dist_front` / `back` / `left` / `right` |
 | `side` | `+1`：感測器朝 **座標增大** 方向（北／東）；`-1`：朝南／西 |
 
-內部：`get_kf_dist` 濾波；讀數異常／低 confidence 直接回 `expected`；`|actual−golden| < 0.25"` 忽略（防微震）。
+內部：`get_kf_dist`；一律查 conf（`<30`／`PROS_ERR` → `expected`）；`|α|>25°` 放棄；`|diff|<0.25"` 忽略；correction **clamp ±6"**。
 
 ```cpp
 // 例：右感測器朝東 (side=+1)，預期 X≈0，golden 量過 = 17.61"
+// 第三個參數 θ：你 setPose 寫入的航向（同 getRealPose 內部用的 odom θ 係兩件事）
 chassis.setPose(
     getRealPose(0, 17.61, dist_right, 1),
     getRealPose(0, 8.7,  dist_back, -1),
-    0
+    0   // 若後面 auton 當 facing 0 寫；只修 XY 可改 chassis.getPose().theta
 );
 ```
+
+**Auton 要唔要計 offset？要唔要當 θ=0？**
+
+| 問題 | 答案 |
+| --- | --- |
+| 要唔要 CAD sensor offset？ | **唔使。** `golden` 喺正確姿態量一次就包晒。 |
+| `getRealPose` 計距離時 θ？ | **唔使你當 0**——函數讀 `chassis.getPose().theta` 做 cos。前提係 odom／IMU 大致啱。 |
+| `setPose(..., θ)` 寫入？ | 後面路徑當咩角，就寫咩角。成段當 (0,0,0) 座標系 → 寫 `0`；只修牆距 → 傳而家 `theta`。**唔好**實際 45° 又硬寫 `0`。 |
+
+**時間成本（heading）**
+
+| 方法 | 大概時間 | 幾時用 |
+| --- | --- | --- |
+| cos 補償（內建） | 0 ms | 日常 mid-auton；偏幾度～十幾度 |
+| 短 `ezPID.turn` 再 reset | ~200–400 ms | θ 已歪到 >15–20° |
+| `wallReset` | ~0.8–1.5 s | 要硬鎖一軸／完全唔信距離 |
 
 **為何唔用絕對場地座標（wall ±70.25" − 讀數 − CAD offset）？**
 
@@ -297,9 +323,9 @@ chassis.setPose(
 
 | | **EzLib `getRealPose`** | **RW-Template `resetPosition*()`（約 3.x／4.x）** |
 | --- | --- | --- |
-| 座標模型 | **相對**：`expected − (actual − golden)×side` | **絕對**：場地中心原點、牆在 ±70.25"，由讀數反推場地 (x,y) |
-| Sensor offset | **唔使**度 tracking center→感測器面 | **必須**量／填每個 sensor 的 X/Y offset（吋，相對車心） |
-| 斜角／轉角 | 假設大致垂直牆；斜打時誤差較大 | 射線追蹤到實際撞牆點；斜角、近角有過濾 |
+| 座標模型 | **相對**：`expected − (actual_perp − golden)×side` | **絕對**：場地中心原點、牆在 ±70.25"，由讀數反推場地 (x,y) |
+| Sensor offset | **唔使**度 tracking center→感測器面（`golden` 包） | **必須**量／填每個 sensor 的 X/Y offset（吋，相對車心） |
+| 斜角／轉角 | **cos(α)** 用而家 θ 投影；`|α|>25°` skip | 射線追蹤到實際撞牆點；斜角、近角有過濾 |
 | 場地砌裝誤差 | 設計上**避開**：唔把牆當完美絕對尺 | 依賴場地幾何正確；牆歪會直接餵進 pose |
 | 開局／中段 | 中段微調；開局推物理對位 | 任意時刻 `resetPositionFront/Back/Left/Right()` |
 | 連續定位 | 無內建 MCL（有 1D KF 濾波） | 另有 **MCL** 粒子濾波（文件標註偏新、先練場測） |

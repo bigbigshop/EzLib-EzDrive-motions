@@ -269,26 +269,61 @@ void auto_init_universal(double start_theta_field_deg, int sensor_mask) {
            has_x ? best_x : cur.x, has_y ? best_y : cur.y, theta);
 }
 
+namespace {
+
+// Sensor beam relative to robot +X (forward), matching auto_init_universal.
+double sensor_mount_deg(pros::Distance& s) {
+    if (&s == &dist_front) return 0.0;
+    if (&s == &dist_back) return 180.0;
+    if (&s == &dist_left) return 270.0;
+    if (&s == &dist_right) return 90.0;
+    return 0.0;
+}
+
+double wrap180(double deg) {
+    while (deg > 180.0) deg -= 360.0;
+    while (deg < -180.0) deg += 360.0;
+    return deg;
+}
+
+} // namespace
+
 double getRealPose(
     double expected,
     double golden,
     pros::Distance& sensor,
     int side
 ) {
-    // 直接用 get_filtered_dist 或 get_smoothed_dist
-    double actual = get_kf_dist(sensor);  // 改用 get_kf_dist
-    
+    // Relative wall fix: expected - (actual_perp - golden) * side
+    // actual is beam length; golden was measured square-to-wall. Project with
+    // current heading so a few degrees of yaw does NOT require wallReset.
+    double actual = get_kf_dist(sensor);
+
     if (actual < 0.1 || actual > 120.0) return expected;
-    int32_t conf = sensor.get_confidence();
-    if (actual > 60.0 && (conf == PROS_ERR || sensor.get_confidence() < 30))
-        return expected;
 
-    double diff = actual - golden;
+    const int32_t conf = sensor.get_confidence();
+    if (conf == PROS_ERR || conf < 30) return expected;
 
-    if (fabs(diff) < 0.25)
-        return expected;
+    // Beam absolute heading → nearest wall normal → incidence angle.
+    const double theta = chassis.getPose().theta;
+    double dir = std::fmod(theta + sensor_mount_deg(sensor) + 360.0, 360.0);
+    if (dir < 0) dir += 360.0;
+    const int wall = static_cast<int>(std::round(dir / 90.0)) % 4;
+    static constexpr double k_wall_normal[4] = {0.0, 90.0, 180.0, 270.0};
+    const double alpha_deg = wrap180(dir - k_wall_normal[wall]);
 
-    double correction = diff * side;
+    // Too skewed: reading is unreliable (corner / long bounce) — keep expected.
+    if (std::fabs(alpha_deg) > 25.0) return expected;
+
+    const double actual_perp = actual * std::cos(alpha_deg * M_PI / 180.0);
+    const double diff = actual_perp - golden;
+
+    if (std::fabs(diff) < 0.25) return expected;
+
+    // Soft clamp: bad golden / transient spike shouldn't yank odom a foot.
+    double correction = diff * static_cast<double>(side);
+    if (correction > 6.0) correction = 6.0;
+    if (correction < -6.0) correction = -6.0;
     return expected - correction;
 }
 
