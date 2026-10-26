@@ -32,11 +32,13 @@ extern pros::MotorGroup rightMotors;
 extern pros::MotorGroup leftMotors;
 extern pros::Imu imu;
 
+// Dash DIST visibility: include/customs/dash_hardware_config.hpp (nullptr hides a slot).
 inline pros::Distance dist_front(6);
 inline pros::Distance dist_back(21);
 inline pros::Distance dist_left(3);
 inline pros::Distance dist_right(9);
 
+// Dash MECH °C tags/ports: dash_hw::kMotorTemps in dash_hardware_config.hpp
 inline pros::Motor left_intake(20);
 inline pros::Motor right_intake(-17);
 inline pros::Motor low_roller(18);
