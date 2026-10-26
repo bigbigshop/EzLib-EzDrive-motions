@@ -76,9 +76,9 @@ lemlib::ExpoDriveCurve steerCurve(3, // joystick deadband out of 127
                                   1 // expo curve gain
 );
 // lateral PID controller
-lemlib::ControllerSettings lateral_controller(6.71, // proportional gain (kP)
+lemlib::ControllerSettings lateral_controller(0, // proportional gain (kP)
                                               0.0849, // integral gain (kI)
-                                              20.5, // derivative gain (kD)
+                                              0.5, // derivative gain (kD)
                                               3, // anti windup
                                               0.5, // small error range, in inches
                                               100, // small error range timeout, in milliseconds
@@ -88,9 +88,9 @@ lemlib::ControllerSettings lateral_controller(6.71, // proportional gain (kP)
 );
 
 // angular PID controller
-lemlib::ControllerSettings angular_controller(3.6, // proportional gain (kP)
+lemlib::ControllerSettings angular_controller(0, // proportional gain (kP)
                                               0.3, // integral gain (kI)
-                                              26.95, // derivative gain (kD)
+                                              0, // derivative gain (kD)
                                               5, // anti windup
                                               1, // small error range, in degrees
                                               100, // small error range timeout, in milliseconds
@@ -122,8 +122,20 @@ void initialize() {
     //leftMotors.set_encoder_units_all(pros::MotorUnits::degrees);
     //rightMotors.set_encoder_units_all(pros::MotorUnits::degrees);
 
-    chassis.calibrate(); // calibrate sensors
-    pros::delay(500);
+    // Clear then show status immediately (avoid blank controller for seconds).
+    controller.clear();
+    pros::delay(50);
+    controller.print(0, 0, "%-15.15s", "YKK 係 傻 佬");
+    pros::delay(50);
+    controller.print(1, 0, "%-15.15s", "calibrating...");
+    pros::delay(50);
+    controller.rumble(".");
+    chassis.calibrate(); // calibrate sensors (IMU — keep robot still)
+    controller.print(1, 0, "%-15.15s", "calibrated OK");
+    pros::delay(50);
+    controller.print(2, 0, "%-15.15s", "ready");
+    controller.rumble("..");
+    pros::delay(200);
     ezPID.set_x_drive(false);
 
     // 設定是否使用追蹤輪
@@ -155,8 +167,8 @@ void initialize() {
     ezPID.set_drive_velocity_threshold(0.10);   // inches per 10ms
     ezPID.set_turn_velocity_threshold(0.25);    // degrees per 10ms
     ezPID.set_heading_velocity_threshold(0.25); // degrees per 10ms
-    // Compact PID page only (full two-column UI OOMs 32KB LVGL → pc:3807204).
-    pidTuner.start();
+    // Defer PID page: creating LVGL views in initialize() can blank/freeze the
+    // brain when LVGL heap is large. uiTask starts it after LVGL settles.
 
     //auto_init_universal(20,USE_BACK | USE_LEFT);
     //auto_init_universal(0); // start_theta_field = 0 (facing north)
@@ -240,8 +252,8 @@ void autonomous() {
  */
 void opcontrol() {
     console.focus();
+    // Light telemetry (slower refresh in telemetry_fn) — safe on 32KB LVGL.
     pros::Task my_telemetry_task(telemetry_fn);
-
 
     while (true) {
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);

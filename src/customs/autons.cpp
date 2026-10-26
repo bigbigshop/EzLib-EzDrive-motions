@@ -450,9 +450,12 @@ void soloAWP(){
 
 void testing() {
   //chassis.moveToPoint(0,20,1000,{true,127},false);
-  ezPID.drive(12,110);
-  ezPID.drive(-12,110);
-  ezPID.turn(90,127,1000);
-  //chassis.moveToPose(0,0,45,1500,{false,6,0.4,127},false);
+  //ezPID.drive(12,110);
+  //ezPID.drive(-12,110);
+  //ezPID.turn(90,127,1000);
+  chassis.moveToPose(20,20,45,1500,{true,6,0.4,127},false);
+  ezPID.turn(0,127,1000);
+  chassis.moveToPose(0,0,0,1500,{false,6,0.4,127,30,10});
+  chassis.moveToPose(10,20,77,1500,{true,6,0.7,127},false);
    
 }

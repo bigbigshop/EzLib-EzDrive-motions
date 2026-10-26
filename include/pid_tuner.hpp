@@ -79,6 +79,9 @@ class PidTuner {
         void run_offset_spins(int direction);
         void log_pid_event(const char* event, double cmd_inches, double cmd_heading, double start_odom_theta,
                            double start_imu_rot, double start_imu_heading);
+        // Sample every ~15ms while drive/turn runs (oscillation / settle curve).
+        void log_pid_run(const char* event_prefix, double cmd_inches, double cmd_heading, double start_odom_theta,
+                         double start_imu_rot, double start_imu_heading);
         void set_note(const char* text);
         const char* field_name(int field) const;
         double field_value(int field) const;

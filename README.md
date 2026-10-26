@@ -375,11 +375,15 @@ bool sd_log::append_csvf(const char* path, const char* header, const char* fmt, 
 
 ### `/usd/pid_tune_log.csv`
 
-每次 drive／turn 完成或 Print snapshot 寫一行，欄位包括：
+Tuner drive／turn 時約每 **15ms** 寫一行 `drive_tick`／`turn_tick`（整段誤差曲線，可睇震盪），結束再寫一行 `drive`／`turn`。Print snapshot 仍寫一行 `print`。
+
+欄位包括：
 
 `timestamp_ms`, `wall_time`, `event`, `cmd_inches`, `cmd_heading`,  
 drive/turn/head 的 `kp,ki,kd,error,sm,bg,vl`,  
 `odom_x,y,theta`, `odom_theta_delta`, `imu_heading`, `imu_rotation`, `imu_rotation_delta`, `traveled`
+
+用 `timestamp_ms` 對 `drive_error`／`turn_error` 畫圖即可。若改過 header，請刪舊 CSV 再跑。
 
 V5 常無 RTC：`wall_time` 可能是 `boot_<millis>`。
 

@@ -93,15 +93,16 @@ double get_kf_dist(pros::Distance& s) {
 
     const double process_noise = 0.2;   
     const double measurement_noise = 4.5; 
-    const double MAX_CHANGE = 60.0;        
-    int port = s.get_port();
-    if (port < 1 || port > 21) return -1.0; 
-    
+    const double MAX_CHANGE = 60.0;
+    // Match other filters: abs() + 999 on bad port (never return -1).
+    int port = std::abs(static_cast<int>(s.get_port()));
+    if (port < 1 || port > 21) return 999.0;
+
     int32_t raw_dist = s.get_distance();
-    
-    if (raw_dist == PROS_ERR || raw_dist == 0) {
-        // 無論邊種情況，都直接 return 999
-        return 999; 
+
+    if (raw_dist == PROS_ERR || raw_dist < 0 || raw_dist == 0) {
+        // Unplugged / no echo — keep sentinel consistent with the rest of relocate.
+        return initialized[port] ? filtered_values[port] : 999.0;
     }
     
     // 如果行到呢度，代表 Sensor 正常駁住，標記為「曾經連線」

@@ -248,6 +248,59 @@ void PidTuner::log_pid_event(const char* event, double cmd_inches, double cmd_he
     }
 }
 
+void PidTuner::log_pid_run(const char* event_prefix, double cmd_inches, double cmd_heading, double start_odom_theta,
+                           double start_imu_rot, double start_imu_heading) {
+    (void)start_imu_heading;
+    constexpr int k_sample_ms = 15; // 10–20ms band — captures oscillation
+    char wall[32];
+    wall_time_str(wall, sizeof(wall));
+
+    sd_log::CsvWriter writer;
+    const bool sd_ok = writer.begin(k_pid_csv, k_pid_header);
+    int samples = 0;
+
+    while (drive.is_busy()) {
+        const auto& d = drive.drive_pid();
+        const auto& t = drive.turn_pid();
+        const auto& h = drive.heading_pid();
+        const lemlib::Pose pose = chassis.getPose();
+        const double imu_rot = imu.get_rotation();
+        const double imu_head = imu.get_heading();
+        const double odom_delta = pose.theta - start_odom_theta;
+        const double imu_delta = imu_rot - start_imu_rot;
+
+        if (sd_ok) {
+            char event[24];
+            std::snprintf(event, sizeof(event), "%s_tick", event_prefix);
+            writer.linef("%lu,%s,%s,%.3f,%.3f,"
+                         "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+                         "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+                         "%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,%.4f,"
+                         "%.4f,%.4f,%.4f,%.4f,"
+                         "%.4f,%.4f,%.4f,%.4f",
+                         static_cast<unsigned long>(pros::millis()), wall, event, cmd_inches, cmd_heading, d.kp, d.ki,
+                         d.kd, d.error, d.small_error, d.big_error, d.velocity_threshold, t.kp, t.ki, t.kd, t.error,
+                         t.small_error, t.big_error, t.velocity_threshold, h.kp, h.ki, h.kd, h.error, h.small_error,
+                         h.big_error, h.velocity_threshold, pose.x, pose.y, pose.theta, odom_delta, imu_head, imu_rot,
+                         imu_delta, drive.get_traveled());
+            ++samples;
+        }
+        pros::delay(k_sample_ms);
+    }
+
+    writer.end();
+    // Final settle row (same as before) for quick end-of-move lookup.
+    log_pid_event(event_prefix, cmd_inches, cmd_heading, start_odom_theta, start_imu_rot, start_imu_heading);
+
+    if (sd_ok) {
+        char note[96];
+        std::snprintf(note, sizeof(note), "%s SD %d ticks + end", event_prefix, samples);
+        set_note(note);
+    } else if (!sd_log::card_present()) {
+        set_note("done (no SD)");
+    }
+}
+
 void PidTuner::test_drive(double inches) {
     if (offset_running_) return;
     if (drive.is_busy()) drive.cancel_movement();
@@ -256,8 +309,7 @@ void PidTuner::test_drive(double inches) {
     const double start_imu_head = imu.get_heading();
     drive.drive(inches, 90, 1800, true);
     pros::Task([this, inches, start_odom, start_imu_rot, start_imu_head]() {
-        drive.waitUntilDone();
-        log_pid_event("drive", inches, 0, start_odom, start_imu_rot, start_imu_head);
+        log_pid_run("drive", inches, 0, start_odom, start_imu_rot, start_imu_head);
     });
 }
 
@@ -269,8 +321,7 @@ void PidTuner::test_turn(double degrees) {
     const double start_imu_head = imu.get_heading();
     drive.turn(degrees, 90, 1500, true);
     pros::Task([this, degrees, start_odom, start_imu_rot, start_imu_head]() {
-        drive.waitUntilDone();
-        log_pid_event("turn", 0, degrees, start_odom, start_imu_rot, start_imu_head);
+        log_pid_run("turn", 0, degrees, start_odom, start_imu_rot, start_imu_head);
     });
 }
 

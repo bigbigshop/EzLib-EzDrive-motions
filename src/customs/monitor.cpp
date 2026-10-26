@@ -87,18 +87,31 @@ void destroy_robot_anim() {
 }
 
 void uiTask_fn() {
-    pros::delay(1000); // wait for LVGL / robodash to settle
+    // Controller lines start quickly; PID page waits so boot stays responsive.
+    pros::delay(200);
+    const uint32_t boot_ms = pros::millis();
+    bool pid_started = false;
+
     uint32_t lastControllerTime = 0;
+    static char pending[3][32] = {};
+    static bool dirty[3] = {true, true, true}; // redraw after initialize() boot text
+    static int next_line = 0;
+    // Seed so first frame replaces "EzDrive boot / calibrating..." promptly.
+    std::snprintf(pending[0], sizeof(pending[0]), "%-15.15s", "");
+    std::snprintf(pending[1], sizeof(pending[1]), "%-15.15s", "");
+    std::snprintf(pending[2], sizeof(pending[2]), "%-15.15s", "");
 
     while (true) {
         uint32_t now = pros::millis();
+        if (!pid_started && !pros::competition::is_connected() && (now - boot_ms) >= 1500) {
+            pidTuner.start();
+            pid_started = true;
+        }
+        // Robot anim disabled at boot path; still gated by autoChange inside.
         tick_robot_anim(now);
 
         // Controller text. Print a changed line only — never clear() on a timer.
         if (now - lastControllerTime > 60) {
-            static char pending[3][32] = {};
-            static bool dirty[3] = {};
-            static int next_line = 0;
 
             auto stage = [&](int line, const char* text) {
                 char buf[32];
@@ -172,12 +185,16 @@ int get_safe_conf(pros::Distance& s) {
 }
 
 void telemetry_fn() {
-    float F_dist = 0.0f;
-    float B_dist = 0.0f;
-    float L_dist = 0.0f;
-    float R_dist = 0.0f;
+    // Let boot + robodash settle before first clear (32KB LVGL).
+    pros::delay(1500);
 
-    int f_conf = 0, b_conf = 0, l_conf = 0, r_conf = 0;
+    // NEVER use rd::Console::printf for long lines — its template buffer is
+    // sizeof(std::string)+argc (~30B), so sprintf overflows → prefetch 0x0.
+    char line[128];
+    auto out = [&](const char* fmt, auto... args) {
+        std::snprintf(line, sizeof(line), fmt, args...);
+        console.println(line);
+    };
 
     static bool was_field = false;
     while (true) {
@@ -195,48 +212,44 @@ void telemetry_fn() {
         }
         if (was_field) {
             was_field = false;
-            pidTuner.start(); // recreate PID page for practice
+            pidTuner.start(); // recreate PID page after leaving field control
         }
 
+        const auto pose = chassis.getPose();
+        const float F_dist = static_cast<float>(get_kf_dist(dist_front));
+        const float B_dist = static_cast<float>(get_kf_dist(dist_back));
+        const float L_dist = static_cast<float>(get_kf_dist(dist_left));
+        const float R_dist = static_cast<float>(get_kf_dist(dist_right));
+        const int f_conf = get_safe_conf(dist_front);
+        const int b_conf = get_safe_conf(dist_back);
+        const int l_conf = get_safe_conf(dist_left);
+        const int r_conf = get_safe_conf(dist_right);
+        auto raw_mm = [](pros::Distance& s) -> long {
+            const int32_t d = s.get_distance();
+            return static_cast<long>(d == PROS_ERR ? -1 : d);
+        };
+
+        // Fixed-width columns (monospace-ish). Keep line count low for LVGL.
         console.clear();
-        console.printf("X: %5.2f,\t", chassis.getPose().x);
-        console.printf("Y: %5.2f,\t", chassis.getPose().y);
-        console.printf("Theta: %.2f\n", chassis.getPose().theta);
-        console.println("");
-        console.printf("LF: %.f,\t ", leftMotors.get_temperature(0));
-        console.printf(" LM: %.f,\t", leftMotors.get_temperature(1));
-        console.printf(" LB: %.f\n", leftMotors.get_temperature(2));
+        out("POSE   X %6.2f   Y %6.2f   T %5.1f", pose.x, pose.y, pose.theta);
+        out("PATH   traveled %6.2f in", ezPID.get_traveled());
+        out("--------------------------------");
+        out("DRIVE  LF LM LB | RF RM RB");
+        out(" C    %3.0f%3.0f%3.0f |%3.0f%3.0f%3.0f", leftMotors.get_temperature(0),
+            leftMotors.get_temperature(1), leftMotors.get_temperature(2),
+            rightMotors.get_temperature(0), rightMotors.get_temperature(1),
+            rightMotors.get_temperature(2));
+        out("MECH   InL InR  LoR HiR");
+        out(" C    %3.0f %3.0f  %3.0f %3.0f", left_intake.get_temperature(),
+            right_intake.get_temperature(), low_roller.get_temperature(),
+            high_roller.get_temperature());
+        out("--------------------------------");
+        out("DIST      in   c    mm");
+        out(" F     %5.1f  %2d  %4ld", F_dist, f_conf, raw_mm(dist_front));
+        out(" B     %5.1f  %2d  %4ld", B_dist, b_conf, raw_mm(dist_back));
+        out(" L     %5.1f  %2d  %4ld", L_dist, l_conf, raw_mm(dist_left));
+        out(" R     %5.1f  %2d  %4ld", R_dist, r_conf, raw_mm(dist_right));
 
-        console.printf("RF: %.f,\t ", rightMotors.get_temperature(0));
-        console.printf("RM: %.f,\t", rightMotors.get_temperature(1));
-        console.printf("RB: %.f\n", rightMotors.get_temperature(2));
-        console.println("");
-
-        console.printf("In_L: %.f,", left_intake.get_temperature());
-        console.printf(" In_R: %.f,", right_intake.get_temperature());
-        console.printf(" LRoll: %.f,", low_roller.get_temperature());
-        console.printf(" HRoll: %.f\n", high_roller.get_temperature());
-        console.println("");
-
-        console.printf("Dist: %.2f\n", ezPID.get_traveled());
-
-        lv_mem_monitor_t mon{};
-        lv_mem_monitor(&mon);
-        console.printf("LVGL %u%% used  free %u B\n", mon.used_pct, mon.free_size);
-        console.println("");
-
-        F_dist = get_kf_dist(dist_front);
-        B_dist = get_kf_dist(dist_back);
-        L_dist = get_kf_dist(dist_left);
-        R_dist = get_kf_dist(dist_right);
-
-        f_conf = get_safe_conf(dist_front);
-        b_conf = get_safe_conf(dist_back);
-        l_conf = get_safe_conf(dist_left);
-        r_conf = get_safe_conf(dist_right);
-
-        console.printf("F: %6.2f(%2d)\tB: %.2f(%2d)\n", F_dist, f_conf, B_dist, b_conf);
-        console.printf("L: %6.2f(%2d)\tR: %.2f(%2d)\n", L_dist, l_conf, R_dist, r_conf);
-        pros::delay(50);
+        pros::delay(120);
     }
 }
