@@ -16,5 +16,7 @@ namespace boot_log {
 void log(const char* fmt, ...);
 void lvgl(const char* tag); // LVGL heap: used/free/total/frag
 void heartbeat(const char* where); // millis + LVGL snapshot
+// Retry fopen(/usd/boot_debug.log) for ~2s — call BEFORE creating robodash views.
+void ensure_sd(const char* tag);
 
 } // namespace boot_log

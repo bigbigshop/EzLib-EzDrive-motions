@@ -124,16 +124,20 @@ void start() {
     if (view_ != nullptr) return;
 
     boot_log::log("telem_dash:start begin");
+    boot_log::lvgl("dash_pre");
     // Caller (ui_pages) usually already released PID; belt-and-suspenders.
     // Do not include pid_tuner.hpp cycle here — ui_pages::show_dash owns ordering.
     view_ = rd_view_create("Dash");
     if (view_ == nullptr) {
         boot_log::log("telem_dash:start FAIL view");
+        boot_log::lvgl("dash_fail_view");
         return;
     }
+    boot_log::log("telem_dash:view ok");
     rd_view_set_anims(view_, RD_ANIM_OFF);
     lv_obj_t* parent = rd_view_obj(view_);
     if (parent == nullptr) {
+        boot_log::log("telem_dash:start FAIL parent");
         rd_view_del(view_);
         view_ = nullptr;
         return;
@@ -143,13 +147,13 @@ void start() {
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
     // —— Header ——
-    make_label(parent, "EzDrive", 10, 4, col_accent(), &lv_font_montserrat_16);
-    hdr_auton_ = make_label(parent, "auton --", 100, 6, col_muted(), &lv_font_montserrat_12);
+    make_label(parent, "YTT-EzLib", 10, 4, col_accent(), &lv_font_montserrat_16);
+    hdr_auton_ = make_label(parent, "auton --", 130, 6, col_muted(), &lv_font_montserrat_12);
 
     batt_bar_ = lv_bar_create(parent);
     if (batt_bar_ != nullptr) {
-        lv_obj_set_pos(batt_bar_, 280, 8);
-        lv_obj_set_size(batt_bar_, 72, 12);
+        lv_obj_set_pos(batt_bar_, 268, 8);
+        lv_obj_set_size(batt_bar_, 56, 12);
         lv_bar_set_range(batt_bar_, 0, 100);
         lv_bar_set_value(batt_bar_, 0, LV_ANIM_OFF);
         lv_obj_set_style_bg_color(batt_bar_, col_dim(), LV_PART_MAIN);
@@ -158,63 +162,69 @@ void start() {
         lv_obj_set_style_radius(batt_bar_, 4, LV_PART_MAIN);
         lv_obj_set_style_radius(batt_bar_, 4, LV_PART_INDICATOR);
     }
-    hdr_batt_ = make_label(parent, "--%", 354, 6, col_muted(), &lv_font_montserrat_12);
-    hdr_lvgl_ = make_label(parent, "LV --", 392, 6, col_muted(), &lv_font_montserrat_12);
+    hdr_batt_ = make_label(parent, "--%", 328, 6, col_muted(), &lv_font_montserrat_12);
+    hdr_lvgl_ = make_label(parent, "LVGL:--%", 360, 6, col_muted(), &lv_font_montserrat_12);
+    boot_log::lvgl("dash_hdr");
 
-    // Header row — left of batt bar; clear of robodash chrome (~444).
-    lv_obj_t* pid_btn = lv_btn_create(parent);
-    if (pid_btn != nullptr) {
-        lv_obj_set_pos(pid_btn, 230, 3);
-        lv_obj_set_size(pid_btn, 44, 20);
-        lv_obj_set_style_bg_color(pid_btn, col_card2(), 0);
-        lv_obj_set_style_radius(pid_btn, 6, 0);
-        lv_obj_t* plab = lv_label_create(pid_btn);
-        if (plab != nullptr) {
-            lv_label_set_text(plab, "PID");
-            style_font(plab, &lv_font_montserrat_12);
-            style_text(plab, col_accent());
-            lv_obj_center(plab);
-        }
-        lv_obj_add_event_cb(pid_btn, on_pid_btn, LV_EVENT_CLICKED, nullptr);
-    }
-
-    // —— Pose hero (left) ——
-    lv_obj_t* pose_card = make_card(parent, 8, 30, 232, 128, col_card());
+    // —— Pose (narrow) ——
+    lv_obj_t* pose_card = make_card(parent, 8, 30, 156, 128, col_card());
     if (pose_card != nullptr) {
-        make_label(pose_card, "POSE", 12, 6, col_muted(), &lv_font_montserrat_12);
-        make_label(pose_card, "X", 12, 28, col_muted(), &lv_font_montserrat_12);
-        make_label(pose_card, "Y", 12, 56, col_muted(), &lv_font_montserrat_12);
-        make_label(pose_card, "T", 12, 84, col_muted(), &lv_font_montserrat_12);
-        pose_x_ = make_label(pose_card, "---.--", 36, 22, col_text(), &lv_font_montserrat_20);
-        pose_y_ = make_label(pose_card, "---.--", 36, 50, col_text(), &lv_font_montserrat_20);
-        pose_t_ = make_label(pose_card, "---.-", 36, 78, col_accent(), &lv_font_montserrat_20);
-        path_vals_ = make_label(pose_card, "path ---.-- in", 12, 106, col_muted(), &lv_font_montserrat_12);
+        make_label(pose_card, "POSE", 8, 6, col_muted(), &lv_font_montserrat_12);
+        make_label(pose_card, "X", 8, 28, col_muted(), &lv_font_montserrat_12);
+        make_label(pose_card, "Y", 8, 56, col_muted(), &lv_font_montserrat_12);
+        make_label(pose_card, "T", 8, 84, col_muted(), &lv_font_montserrat_12);
+        pose_x_ = make_label(pose_card, "---.-", 28, 26, col_text(), &lv_font_montserrat_16);
+        pose_y_ = make_label(pose_card, "---.-", 28, 54, col_text(), &lv_font_montserrat_16);
+        pose_t_ = make_label(pose_card, "---.-", 28, 82, col_accent(), &lv_font_montserrat_16);
+        path_vals_ = make_label(pose_card, "d ---.-", 8, 108, col_muted(), &lv_font_montserrat_12);
     }
+    boot_log::lvgl("dash_pose");
 
-    // —— Dist 2×2 (right) ——
-    lv_obj_t* dist_card = make_card(parent, 248, 30, 224, 128, col_card());
+    // —— Dist 2×2 (takes freed width) ——
+    lv_obj_t* dist_card = make_card(parent, 172, 30, 300, 128, col_card());
     if (dist_card != nullptr) {
         make_label(dist_card, "DIST", 12, 6, col_muted(), &lv_font_montserrat_12);
 
         auto cell = [&](const char* tag, lv_coord_t x, lv_coord_t y, lv_obj_t*& out) {
-            lv_obj_t* box = make_card(dist_card, x, y, 100, 44, col_card2());
-            if (box == nullptr) return;
+            lv_obj_t* box = make_card(dist_card, x, y, 138, 44, col_card2());
+            if (box == nullptr) {
+                boot_log::log("telem_dash:dist cell OOM %s", tag);
+                return;
+            }
             make_label(box, tag, 8, 4, col_muted(), &lv_font_montserrat_12);
             out = make_label(box, "--.-", 8, 20, col_text(), &lv_font_montserrat_16);
         };
         cell("F", 10, 28, dist_f_);
-        cell("B", 114, 28, dist_b_);
+        cell("B", 152, 28, dist_b_);
         cell("L", 10, 76, dist_l_);
-        cell("R", 114, 76, dist_r_);
+        cell("R", 152, 76, dist_r_);
+    }
+    boot_log::lvgl("dash_dist");
+
+    // —— Temps (leave room for PID) ——
+    lv_obj_t* temp_card = make_card(parent, 8, 166, 384, 48, col_card());
+    if (temp_card != nullptr) {
+        make_label(temp_card, "DRIVE", 8, 4, col_muted(), &lv_font_montserrat_12);
+        drive_vals_ = make_label(temp_card, "--/--/--   --/--/--", 56, 4, col_text(), &lv_font_montserrat_12);
+        make_label(temp_card, "MECH", 8, 26, col_muted(), &lv_font_montserrat_12);
+        mech_vals_ = make_label(temp_card, "--/--   --/--", 56, 26, col_text(), &lv_font_montserrat_12);
     }
 
-    // —— Temps ——
-    lv_obj_t* temp_card = make_card(parent, 8, 166, 464, 54, col_card());
-    if (temp_card != nullptr) {
-        make_label(temp_card, "DRIVE °C", 12, 4, col_muted(), &lv_font_montserrat_12);
-        drive_vals_ = make_label(temp_card, "-- -- -- | -- -- --", 12, 24, col_text(), &lv_font_montserrat_14);
-        make_label(temp_card, "MECH °C", 280, 4, col_muted(), &lv_font_montserrat_12);
-        mech_vals_ = make_label(temp_card, "In -- --  Ro -- --", 280, 24, col_text(), &lv_font_montserrat_14);
+    // Bottom-right — clear of robodash chrome (~444).
+    lv_obj_t* pid_btn = lv_btn_create(parent);
+    if (pid_btn != nullptr) {
+        lv_obj_set_pos(pid_btn, 400, 174);
+        lv_obj_set_size(pid_btn, 64, 36);
+        lv_obj_set_style_bg_color(pid_btn, col_card2(), 0);
+        lv_obj_set_style_radius(pid_btn, 8, 0);
+        lv_obj_t* plab = lv_label_create(pid_btn);
+        if (plab != nullptr) {
+            lv_label_set_text(plab, "PID");
+            style_font(plab, &lv_font_montserrat_14);
+            style_text(plab, col_accent());
+            lv_obj_center(plab);
+        }
+        lv_obj_add_event_cb(pid_btn, on_pid_btn, LV_EVENT_CLICKED, nullptr);
     }
 
     boot_log::log("telem_dash:start done");
@@ -248,9 +258,11 @@ void refresh() {
 
     char buf[64];
 
-    std::string auton = selector.get_auton()
-                            .value_or(rd::Selector::routine_t{"No auton", []() {}})
-                            .name;
+    std::string auton = (selector != nullptr)
+                            ? selector->get_auton()
+                                  .value_or(rd::Selector::routine_t{"No auton", []() {}})
+                                  .name
+                            : "No auton";
     if (auton.size() > 18) auton.resize(18);
     set_cached(hdr_auton_, cache_auton_, sizeof(cache_auton_), auton.c_str());
 
@@ -269,21 +281,21 @@ void refresh() {
     const uint32_t used = mon.total_size - mon.free_size;
     const unsigned pct =
         mon.total_size > 0 ? static_cast<unsigned>((used * 100U) / mon.total_size) : 0;
-    std::snprintf(buf, sizeof(buf), "LV%u", pct);
+    std::snprintf(buf, sizeof(buf), "LVGL:%u%%", pct);
     set_cached(hdr_lvgl_, cache_lvgl_, sizeof(cache_lvgl_), buf);
     if (hdr_lvgl_ != nullptr) {
         style_text(hdr_lvgl_, pct >= 85 ? col_hot() : (pct >= 70 ? col_warn() : col_muted()));
     }
 
     const auto pose = chassis.getPose();
-    std::snprintf(buf, sizeof(buf), "%7.2f", pose.x);
+    std::snprintf(buf, sizeof(buf), "%6.1f", pose.x);
     set_cached(pose_x_, cache_px_, sizeof(cache_px_), buf);
-    std::snprintf(buf, sizeof(buf), "%7.2f", pose.y);
+    std::snprintf(buf, sizeof(buf), "%6.1f", pose.y);
     set_cached(pose_y_, cache_py_, sizeof(cache_py_), buf);
-    std::snprintf(buf, sizeof(buf), "%6.1f", pose.theta);
+    std::snprintf(buf, sizeof(buf), "%5.1f", pose.theta);
     set_cached(pose_t_, cache_pt_, sizeof(cache_pt_), buf);
 
-    std::snprintf(buf, sizeof(buf), "path %6.2f in", ezPID.get_traveled());
+    std::snprintf(buf, sizeof(buf), "d %5.1f", ezPID.get_traveled());
     set_cached(path_vals_, cache_path_, sizeof(cache_path_), buf);
 
     auto fill_dist = [](lv_obj_t* lab, char* cache, std::size_t n, pros::Distance& s, float inches) {
@@ -306,7 +318,7 @@ void refresh() {
     const double rf = rightMotors.get_temperature(0);
     const double rm = rightMotors.get_temperature(1);
     const double rb = rightMotors.get_temperature(2);
-    std::snprintf(buf, sizeof(buf), "%3.0f %3.0f %3.0f | %3.0f %3.0f %3.0f", lf, lm, lb, rf, rm, rb);
+    std::snprintf(buf, sizeof(buf), "%.0f/%.0f/%.0f   %.0f/%.0f/%.0f", lf, lm, lb, rf, rm, rb);
     set_cached(drive_vals_, cache_drive_, sizeof(cache_drive_), buf);
     if (drive_vals_ != nullptr) {
         style_text(drive_vals_, temp_color(std::max({lf, lm, lb, rf, rm, rb})));
@@ -316,7 +328,7 @@ void refresh() {
     const double ir = right_intake.get_temperature();
     const double lo = low_roller.get_temperature();
     const double hi = high_roller.get_temperature();
-    std::snprintf(buf, sizeof(buf), "In %3.0f %3.0f  Ro %3.0f %3.0f", il, ir, lo, hi);
+    std::snprintf(buf, sizeof(buf), "%.0f/%.0f   %.0f/%.0f", il, ir, lo, hi);
     set_cached(mech_vals_, cache_mech_, sizeof(cache_mech_), buf);
     if (mech_vals_ != nullptr) {
         style_text(mech_vals_, temp_color(std::max({il, ir, lo, hi})));

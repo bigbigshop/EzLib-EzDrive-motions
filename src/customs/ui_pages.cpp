@@ -11,8 +11,15 @@ void show_dash() {
     boot_log::log("ui_pages:show_dash");
     pidTuner.release_ui();
     telem_dash::start();
-    telem_dash::focus();
-    boot_log::lvgl("after_show_dash");
+    if (telem_dash::ready()) {
+        telem_dash::focus();
+        boot_log::lvgl("after_show_dash");
+    } else {
+        // Dash create failed (OOM / null) — keep something on screen.
+        boot_log::log("ui_pages:show_dash FAIL — selector fallback");
+        if (selector != nullptr) selector->focus();
+        boot_log::lvgl("after_show_dash_fail");
+    }
 }
 
 void show_pid() {

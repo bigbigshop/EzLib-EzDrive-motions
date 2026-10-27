@@ -11,7 +11,6 @@
 
 // One Anim view + one lv_img; frames stay in flash. Do NOT create 10 rd::Image
 // pages — that OOMs the 32KB LVGL heap.
-rd::Console console;
 
 bool autoChange = false;
 int displayMenu = 0;
@@ -21,7 +20,7 @@ float elapsedSec = 0;
 namespace {
 
 constexpr int k_frame_count = 10;
-constexpr uint32_t k_frame_ms = 100;
+constexpr uint32_t k_frame_ms = 20;
 
 const lv_img_dsc_t* const k_frames[k_frame_count] = {
     &robot01, &robot02, &robot03, &robot04, &robot05,
@@ -201,8 +200,9 @@ void uiTask_fn() {
 
             if (field) {
                 // Match / field-control: battery, auton, pose only — no tuner UI.
-                std::string autonName = selector.get_auton()
-                    .value_or(rd::Selector::routine_t{"No auton", [](){}}).name;
+                std::string autonName = (selector != nullptr)
+                    ? selector->get_auton().value_or(rd::Selector::routine_t{"No auton", [](){}}).name
+                    : "No auton";
                 std::snprintf(raw0, sizeof(raw0), "B:%3.0f C:%3.0f",
                               (double)controller.get_battery_capacity(),
                               (double)pros::battery::get_capacity());
@@ -213,8 +213,11 @@ void uiTask_fn() {
                 pidTuner.format_controller(raw0, raw1, raw2);
             } else if (displayMenu == 0) {
                 elapsedSec = (now - globalTime) / 1000;
-                std::string autonName = selector.get_auton()
-                    .value_or(rd::Selector::routine_t{"No auton selected", [](){}}).name;
+                std::string autonName = (selector != nullptr)
+                    ? selector->get_auton()
+                          .value_or(rd::Selector::routine_t{"No auton selected", [](){}})
+                          .name
+                    : "No auton selected";
                 std::snprintf(raw0, sizeof(raw0), "T:%4.0f", elapsedSec);
                 std::snprintf(raw1, sizeof(raw1), "B:%3.0f C:%3.0f",
                               (double)controller.get_battery_capacity(),
@@ -267,7 +270,7 @@ void telemetry_fn() {
                 destroy_robot_anim();
                 telem_dash::release();
                 pidTuner.release_ui();
-                selector.focus();
+                if (selector != nullptr) selector->focus();
                 boot_log::lvgl("field_teardown");
             }
             pros::delay(200);

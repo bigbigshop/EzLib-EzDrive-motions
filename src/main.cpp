@@ -20,15 +20,9 @@ const SensorOffset OFF_BACK  = { -2.95, -6.81 };
 const SensorOffset OFF_LEFT  = { -5.94,  3.50 };
 const SensorOffset OFF_RIGHT = {  5.90,  3.50 };
 
-rd::Selector selector({
-    {"Left Auton", &leftAuton, "", 100},   
-    {"Left Final", &leftAutonFinal, "", 100},
-    {"Right Auton", &rightAuton, "", 100}, 
-    {"Right Auton V2", &rightAutonV2, "", 100},
-    {"AWP", &soloAWP, "", 100},
-    {"Testing", &testing, "", 100},
-    {"Skills", &skill},
-});
+// Allocated in initialize() after boot_log::ensure_sd — global rd::Selector
+// constructs LVGL views and was blanking the brain on the 128KB liblvgl.a.
+rd::Selector* selector = nullptr;
 
 // controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -116,8 +110,23 @@ ez_compat::PidTuner pidTuner(ezPID);
  */
 
 void initialize() {
-    boot_log::log("initialize:enter");
-    boot_log::lvgl("init0");
+    // SD first — before ANY robodash/LVGL view. Retries ~2s (card often late).
+    boot_log::ensure_sd("pre_robodash");
+    boot_log::log("initialize:enter branch=LVGL-128KB-HEAP expect_total=32768");
+
+    // Deferred robodash ctors (were global → blank screen / no SD log).
+    boot_log::log("initialize:new Selector");
+    selector = new rd::Selector({
+        {"Left Auton", &leftAuton, "", 100},
+        {"Left Final", &leftAutonFinal, "", 100},
+        {"Right Auton", &rightAuton, "", 100},
+        {"Right Auton V2", &rightAutonV2, "", 100},
+        {"AWP", &soloAWP, "", 100},
+        {"Testing", &testing, "", 100},
+        {"Skills", &skill},
+    });
+    // No rd::Console — saves LVGL heap; PID Print uses USB + SD.
+    boot_log::lvgl("after_robodash_new");
     //pros::lcd::initialize(); // initialize brain screen
     /*
     imu.reset(); // reset imu to 0 degrees
@@ -253,7 +262,7 @@ bool autoStart = false;
 void autonomous() { 
     chassis.setPose(0, 0, 0);
     ezPID.reset_pid();
-    selector.run_auton();
+    if (selector != nullptr) selector->run_auton();
 }
 
 /**
@@ -326,16 +335,20 @@ void opcontrol() {
 
             if(controller.get_digital(DIGITAL_LEFT)) {
                 autoChange = false;
-                selector.prev_auton();
-                selector.focus();
+                if (selector != nullptr) {
+                    selector->prev_auton();
+                    selector->focus();
+                }
                 ezPID.set_pose(0, 0, 0);
                 ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses
             }
             if(controller.get_digital(DIGITAL_RIGHT)) {
                 autoChange = false;
-                selector.next_auton();
-                selector.focus();
+                if (selector != nullptr) {
+                    selector->next_auton();
+                    selector->focus();
+                }
                 ezPID.set_pose(0, 0, 0);
                 ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses

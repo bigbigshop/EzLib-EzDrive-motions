@@ -38,7 +38,8 @@ enum Action {
     ACT_FIELD_PREV,
     ACT_FIELD_NEXT,
     ACT_OFFSET_CCW,
-    ACT_OFFSET_CW
+    ACT_OFFSET_CW,
+    ACT_DASH
 };
 
 constexpr const char* k_pid_csv = "/usd/pid_tune_log.csv";
@@ -69,7 +70,7 @@ void wall_time_str(char* out, std::size_t n) {
 }
 
 BumpEvent g_bumps[2];
-ActionEvent g_actions[12];
+ActionEvent g_actions[14];
 int g_action_count = 0;
 
 lv_obj_t* make_button(lv_obj_t* parent, const char* text, lv_coord_t x, lv_coord_t y, lv_coord_t w, lv_coord_t h,
@@ -198,14 +199,11 @@ void PidTuner::set_note(const char* text) {
 
 void PidTuner::print_now() {
     const std::string snippet = drive.constants_snippet();
-    std::printf("%s", snippet.c_str());
+    // Console page removed (LVGL heap). Dump to USB terminal; snapshot still → SD CSV.
+    std::printf("=== YTT-EzLib constants (paste into initialize) ===\n%s\n", snippet.c_str());
     std::fflush(stdout);
-    console.focus();
-    console.clear();
-    console.println("=== EzDrive constants (paste into initialize) ===");
-    console.println(snippet);
     log_pid_event("print", 0, 0, chassis.getPose().theta, imu.get_rotation(), imu.get_heading());
-    set_note(sd_log::card_present() ? "printed + SD snapshot" : "printed (no SD)");
+    set_note(sd_log::card_present() ? "printed USB+SD" : "printed USB (no SD)");
 }
 
 void PidTuner::log_pid_event(const char* event, double cmd_inches, double cmd_heading, double start_odom_theta,
@@ -408,6 +406,13 @@ void PidTuner::on_action_event(lv_event_t* event) {
         case ACT_POSE0: self->zero_pose(); break;
         case ACT_OFFSET_CCW: self->run_offset_spins(+1); break;
         case ACT_OFFSET_CW: self->run_offset_spins(-1); break;
+        case ACT_DASH:
+            self->controller_mode_ = false;
+            self->drive.cancel_movement();
+            std::snprintf(self->note_text_, sizeof(self->note_text_), "back to Dash");
+            self->note_dirty_ = true;
+            ui_pages::show_dash();
+            break;
         case ACT_FIELD_PREV:
             self->step_field(-1);
             self->zero_pose();
@@ -475,7 +480,7 @@ void PidTuner::start() {
 
     lv_obj_t* title = lv_label_create(parent);
     if (title != nullptr) {
-        lv_label_set_text(title, "EzDrive PID  < > field   +/- value");
+        lv_label_set_text(title, "YTT-EzLib PID  < > field   +/- value");
         lv_obj_set_pos(title, 8, 4);
         style_label(title);
     }
@@ -521,11 +526,12 @@ void PidTuner::start() {
     add_action("h-90", ACT_TURN_NEG, 232, 152, 56);
     add_action("Print", ACT_PRINT, 296, 152, 64);
 
-    // Single action row — Pose0 stays above robodash chrome and remains tappable.
+    // Single action row — Dash returns to practice dashboard (releases PID page).
     add_action("Ctrl", ACT_CONTROLLER, 8, 188, 56);
     add_action("Pose0", ACT_POSE0, 72, 188, 56);
     add_action("L10", ACT_OFFSET_CCW, 136, 188, 48);
     add_action("R10", ACT_OFFSET_CW, 192, 188, 48);
+    add_action("Dash", ACT_DASH, 248, 188, 56);
 
     note_ = lv_label_create(parent);
     if (note_ != nullptr) {

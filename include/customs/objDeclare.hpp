@@ -10,7 +10,8 @@
 extern lemlib::Chassis chassis;
 extern ez_compat::EzDrive ezPID;
 extern ez_compat::PidTuner pidTuner;
-extern rd::Selector selector;
+// Heap-allocated in initialize() AFTER boot_log SD probe (global ctor blanks 128KB).
+extern rd::Selector* selector;
 extern lemlib::TrackingWheel vertical;
 extern lemlib::TrackingWheel horizontal;
 
