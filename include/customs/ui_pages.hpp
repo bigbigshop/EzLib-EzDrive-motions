@@ -1,7 +1,7 @@
 #pragma once
 
-// PID ↔ Dash mutual exclusion (only one heavy view in LVGL heap).
-// Practice default = Dash. X+A / Dash "PID" → PID. DOWN → Dash.
+// Focus Dash or PID without destroying the other (malloc LVGL).
+// Field-control teardown still releases both from telemetry_fn.
 
 namespace ui_pages {
 

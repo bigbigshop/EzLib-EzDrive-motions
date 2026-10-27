@@ -1,5 +1,6 @@
 #include "main.h"
 #include "customs/monitor.hpp"
+#include "customs/auton_select.hpp"
 #include "customs/boot_log.hpp"
 #include "customs/telem_dash.hpp"
 #include "customs/ui_pages.hpp"
@@ -173,13 +174,11 @@ void uiTask_fn() {
         if (view_menu_dot == nullptr && (now - boot_ms) >= 400 && (now - boot_ms) < 8000) {
             if (ensure_view_menu_blink_dot()) {
                 boot_log::log("uiTask:view_menu_dot ok");
-                boot_log::lvgl("after_dot");
             }
         }
         // PID is NOT auto-started — mutually exclusive with Dash (X+A / Dash PID btn).
         // Robot anim disabled at boot path; still gated by autoChange inside.
         tick_robot_anim(now);
-        boot_log::heartbeat("uiTask");
 
         // Controller text. Print a changed line only — never clear() on a timer.
         if (now - lastControllerTime > 60) {
@@ -200,9 +199,7 @@ void uiTask_fn() {
 
             if (field) {
                 // Match / field-control: battery, auton, pose only — no tuner UI.
-                std::string autonName = (selector != nullptr)
-                    ? selector->get_auton().value_or(rd::Selector::routine_t{"No auton", [](){}}).name
-                    : "No auton";
+                std::string autonName = auton_select::name();
                 std::snprintf(raw0, sizeof(raw0), "B:%3.0f C:%3.0f",
                               (double)controller.get_battery_capacity(),
                               (double)pros::battery::get_capacity());
@@ -213,11 +210,7 @@ void uiTask_fn() {
                 pidTuner.format_controller(raw0, raw1, raw2);
             } else if (displayMenu == 0) {
                 elapsedSec = (now - globalTime) / 1000;
-                std::string autonName = (selector != nullptr)
-                    ? selector->get_auton()
-                          .value_or(rd::Selector::routine_t{"No auton selected", [](){}})
-                          .name
-                    : "No auton selected";
+                std::string autonName = auton_select::name();
                 std::snprintf(raw0, sizeof(raw0), "T:%4.0f", elapsedSec);
                 std::snprintf(raw1, sizeof(raw1), "B:%3.0f C:%3.0f",
                               (double)controller.get_battery_capacity(),
@@ -253,25 +246,23 @@ void uiTask_fn() {
 
 void telemetry_fn() {
     boot_log::log("telemetry:enter");
-    // Let boot + robodash settle; then Dash only (PID on demand).
-    pros::delay(1200);
+    // Dash already focused in initialize(); re-focus after settle in case
+    // something else stole the view during calibrate.
+    pros::delay(200);
     boot_log::log("telemetry:show_dash");
     ui_pages::show_dash();
-    boot_log::lvgl("telem_dash_ready");
 
     static bool was_field = false;
     while (true) {
-        boot_log::heartbeat("telemetry");
         const bool field = pros::competition::is_connected();
         if (field) {
             if (!was_field) {
                 was_field = true;
-                boot_log::log("telemetry:field on — teardown UI");
+                boot_log::log("telemetry:field on — teardown heavy UI, keep Dash");
                 destroy_robot_anim();
-                telem_dash::release();
                 pidTuner.release_ui();
-                if (selector != nullptr) selector->focus();
-                boot_log::lvgl("field_teardown");
+                // No Selector page — keep Type R Dash (shows auton name).
+                ui_pages::show_dash();
             }
             pros::delay(200);
             continue;
@@ -280,11 +271,10 @@ void telemetry_fn() {
             was_field = false;
             boot_log::log("telemetry:field off — restore Dash");
             ui_pages::show_dash();
-            boot_log::lvgl("field_restore");
         }
 
-        // While PID owns the screen, skip Dash refresh (page released).
-        if (telem_dash::ready()) {
+        // Only refresh once boot finished (data panels exist).
+        if (telem_dash::live()) {
             telem_dash::refresh();
         }
         pros::delay(150);

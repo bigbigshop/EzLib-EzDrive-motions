@@ -9,25 +9,20 @@ namespace ui_pages {
 
 void show_dash() {
     boot_log::log("ui_pages:show_dash");
-    pidTuner.release_ui();
+    // Keep PID page alive — only focus Dash.
     telem_dash::start();
     if (telem_dash::ready()) {
         telem_dash::focus();
-        boot_log::lvgl("after_show_dash");
     } else {
-        // Dash create failed (OOM / null) — keep something on screen.
-        boot_log::log("ui_pages:show_dash FAIL — selector fallback");
-        if (selector != nullptr) selector->focus();
-        boot_log::lvgl("after_show_dash_fail");
+        boot_log::log("ui_pages:show_dash FAIL");
     }
 }
 
 void show_pid() {
     boot_log::log("ui_pages:show_pid");
-    telem_dash::release();
+    // Keep Dash alive — only focus PID.
     pidTuner.start();
     pidTuner.focus();
-    boot_log::lvgl("after_show_pid");
 }
 
 } // namespace ui_pages

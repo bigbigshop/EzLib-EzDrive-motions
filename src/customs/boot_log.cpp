@@ -1,7 +1,6 @@
 #include "customs/boot_log.hpp"
 
 #include "customs/sd_log.hpp"
-#include "liblvgl/lvgl.h"
 #include "pros/rtos.hpp"
 
 #include <cstdarg>
@@ -81,40 +80,6 @@ void log(const char* fmt, ...) {
     std::snprintf(line, sizeof(line), "%lu,%s",
                   static_cast<unsigned long>(pros::millis()), msg);
     emit(line);
-#endif
-}
-
-void lvgl(const char* tag) {
-#if !BOOT_LOG_ENABLE
-    (void)tag;
-    return;
-#else
-    lv_mem_monitor_t mon{};
-    lv_mem_monitor(&mon);
-    const uint32_t used = mon.total_size - mon.free_size;
-    const unsigned pct =
-        mon.total_size > 0 ? static_cast<unsigned>((used * 100U) / mon.total_size) : 0;
-    log("lvgl[%s] used=%lu free=%lu total=%lu pct=%u frag=%u%% usd=%d",
-        tag != nullptr ? tag : "?",
-        static_cast<unsigned long>(used),
-        static_cast<unsigned long>(mon.free_size),
-        static_cast<unsigned long>(mon.total_size),
-        pct,
-        static_cast<unsigned>(mon.frag_pct),
-        sd_log::card_present() ? 1 : 0);
-#endif
-}
-
-void heartbeat(const char* where) {
-#if !BOOT_LOG_ENABLE
-    (void)where;
-    return;
-#else
-    static uint32_t last_ms = 0;
-    const uint32_t now = pros::millis();
-    if (now - last_ms < 2000) return;
-    last_ms = now;
-    lvgl(where != nullptr ? where : "hb");
 #endif
 }
 

@@ -9,7 +9,7 @@ namespace ez_compat {
 
 // Brain + controller tuner for EzDrive gains.
 // Logs to /usd/pid_tune_log.csv; L2/R2 write /usd/findingOffset.csv (CCW/CW x10).
-// Brain UI stays compact: LVGL heap is only 32KB in the prebuilt liblvgl.a.
+// Print → USB (+ SD CSV). Dash/PID coexist under malloc LVGL.
 class PidTuner {
     public:
         explicit PidTuner(EzDrive& drive) : drive(drive) {}
@@ -21,7 +21,7 @@ class PidTuner {
         void toggle_controller_mode();
         // Stop controller mode / offset spins (keeps PID page alive).
         void force_off();
-        // Match mode: force_off + delete PID robodash view (frees LVGL heap).
+        // Match mode / teardown: force_off + delete PID view.
         // Call start() again after leaving field control to recreate.
         void release_ui();
         void handle_controller(pros::Controller& controller);

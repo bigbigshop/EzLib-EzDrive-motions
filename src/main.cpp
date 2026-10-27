@@ -1,4 +1,5 @@
 #include "main.h"
+#include "customs/auton_select.hpp"
 #include "customs/telem_dash.hpp"
 #include "customs/ui_pages.hpp"
 #include "lemlib/api.hpp" // IWYU pragma: keep
@@ -20,9 +21,6 @@ const SensorOffset OFF_BACK  = { -2.95, -6.81 };
 const SensorOffset OFF_LEFT  = { -5.94,  3.50 };
 const SensorOffset OFF_RIGHT = {  5.90,  3.50 };
 
-// Allocated in initialize() after boot_log::ensure_sd — global rd::Selector
-// constructs LVGL views and was blanking the brain on the 128KB liblvgl.a.
-rd::Selector* selector = nullptr;
 
 // controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
@@ -112,23 +110,20 @@ ez_compat::PidTuner pidTuner(ezPID);
 void initialize() {
     // SD first — before ANY robodash/LVGL view. Retries ~2s (card often late).
     boot_log::ensure_sd("pre_robodash");
-    // LV_MEM_CUSTOM=1: pool via malloc (no static 32/128KB BSS). total from
-    // lv_mem_monitor may be 0 — look for boot lines + live UI instead.
     boot_log::log("initialize:enter LV_MEM_CUSTOM=1 malloc-pool");
 
-    // Deferred robodash ctors (were global → blank screen / no SD log).
-    boot_log::log("initialize:new Selector");
-    selector = new rd::Selector({
-        {"Left Auton", &leftAuton, "", 100},
-        {"Left Final", &leftAutonFinal, "", 100},
-        {"Right Auton", &rightAuton, "", 100},
-        {"Right Auton V2", &rightAutonV2, "", 100},
-        {"AWP", &soloAWP, "", 100},
-        {"Testing", &testing, "", 100},
+    // Headless auton list (no robodash Selector page — saves LVGL heap).
+    boot_log::log("initialize:auton_select");
+    auton_select::init({
+        {"Left Auton", &leftAuton},
+        {"Left Final", &leftAutonFinal},
+        {"Right Auton", &rightAuton},
+        {"Right Auton V2", &rightAutonV2},
+        {"AWP", &soloAWP},
+        {"Testing", &testing},
         {"Skills", &skill},
     });
-    // No rd::Console — saves LVGL heap; PID Print uses USB + SD.
-    boot_log::lvgl("after_robodash_new");
+    ui_pages::show_dash();
     //pros::lcd::initialize(); // initialize brain screen
     /*
     imu.reset(); // reset imu to 0 degrees
@@ -148,6 +143,8 @@ void initialize() {
     boot_log::log("initialize:before calibrate");
     chassis.calibrate(); // calibrate sensors (IMU — keep robot still)
     boot_log::log("initialize:after calibrate");
+    // Centered boot gauge → left battery gauge + data panels.
+    telem_dash::finish_boot();
     controller.print(1, 0, "%-15.15s", "calibrated OK");
     pros::delay(50);
     controller.print(2, 0, "%-15.15s", "ready");
@@ -233,7 +230,6 @@ void initialize() {
         }
     });
     boot_log::log("initialize:exit");
-    boot_log::lvgl("init_done");
 }
 
 /**
@@ -246,9 +242,7 @@ void disabled() {
 /**
  * runs after initialize if the robot is connected to field control
  */
-void competition_initialize() {
-    //selector.focus();
-}
+void competition_initialize() {}
 
 // get a path used for pure pursuit
 // this needs to be put outside a function
@@ -264,7 +258,7 @@ bool autoStart = false;
 void autonomous() { 
     chassis.setPose(0, 0, 0);
     ezPID.reset_pid();
-    if (selector != nullptr) selector->run_auton();
+    auton_select::run();
 }
 
 /**
@@ -272,14 +266,12 @@ void autonomous() {
  */
 void opcontrol() {
     boot_log::log("opcontrol:enter");
-    boot_log::lvgl("op_enter");
     // Dash is created in telemetry_fn after settle; focus when ready / on DOWN.
     // Light telemetry — Dash labels only (128KB LVGL).
     pros::Task my_telemetry_task(telemetry_fn);
     boot_log::log("opcontrol:telemetry spawned");
 
     while (true) {
-        boot_log::heartbeat("opcontrol");
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
 
         // Field control: tear down Anim + PID pages once (see telemetry_fn edge).
@@ -337,20 +329,14 @@ void opcontrol() {
 
             if(controller.get_digital(DIGITAL_LEFT)) {
                 autoChange = false;
-                if (selector != nullptr) {
-                    selector->prev_auton();
-                    selector->focus();
-                }
+                auton_select::prev();
                 ezPID.set_pose(0, 0, 0);
                 ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses
             }
             if(controller.get_digital(DIGITAL_RIGHT)) {
                 autoChange = false;
-                if (selector != nullptr) {
-                    selector->next_auton();
-                    selector->focus();
-                }
+                auton_select::next();
                 ezPID.set_pose(0, 0, 0);
                 ezPID.reset_pid();
                 pros::delay(300); // delay to prevent multiple presses
@@ -377,7 +363,7 @@ void opcontrol() {
             }
             if(controller.get_digital(DIGITAL_DOWN)) {
                 //chassis.setPose(0, 0, 0);
-                ui_pages::show_dash(); // also drops PID page (mutex)
+                ui_pages::show_dash();
                 autoChange = false;
             }            
         }        

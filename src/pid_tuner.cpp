@@ -199,7 +199,7 @@ void PidTuner::set_note(const char* text) {
 
 void PidTuner::print_now() {
     const std::string snippet = drive.constants_snippet();
-    // Console page removed (LVGL heap). Dump to USB terminal; snapshot still → SD CSV.
+    // Print → USB terminal; snapshot still → SD CSV.
     std::printf("=== YTT-EzLib constants (paste into initialize) ===\n%s\n", snippet.c_str());
     std::fflush(stdout);
     log_pid_event("print", 0, 0, chassis.getPose().theta, imu.get_rotation(), imu.get_heading());
@@ -459,13 +459,11 @@ void PidTuner::refresh() {
 
 void PidTuner::start() {
     if (started_) return;
-    // Mutual exclusion with Dash — only one heavy page in LVGL heap.
-    telem_dash::release();
+    // Dash stays alive; robodash only focuses this view.
     started_ = true;
     g_action_count = 0;
 
-    // Compact UI only — two-column grid OOMs the 32KB LVGL heap (pc:3807204 /
-    // lv_obj_class_create_obj). Long field names still show on the active row.
+    // Compact single-column tuner (field names on active row).
     view_ = rd_view_create("PID");
     if (view_ == nullptr) {
         started_ = false;
@@ -526,7 +524,7 @@ void PidTuner::start() {
     add_action("h-90", ACT_TURN_NEG, 232, 152, 56);
     add_action("Print", ACT_PRINT, 296, 152, 64);
 
-    // Single action row — Dash returns to practice dashboard (releases PID page).
+    // Single action row — Dash focuses practice dashboard (PID stays allocated).
     add_action("Ctrl", ACT_CONTROLLER, 8, 188, 56);
     add_action("Pose0", ACT_POSE0, 72, 188, 56);
     add_action("L10", ACT_OFFSET_CCW, 136, 188, 48);
@@ -552,13 +550,13 @@ void PidTuner::toggle_controller_mode() {
     controller_mode_ = !controller_mode_;
     if (controller_mode_) {
         drive.cancel_movement();
-        ui_pages::show_pid(); // drop Dash, ensure PID view
+        ui_pages::show_pid();
         std::snprintf(note_text_, sizeof(note_text_), "controller tuner on");
         note_dirty_ = true;
     } else {
         std::snprintf(note_text_, sizeof(note_text_), "controller tuner off");
         note_dirty_ = true;
-        ui_pages::show_dash(); // release PID page
+        ui_pages::show_dash();
     }
 }
 
