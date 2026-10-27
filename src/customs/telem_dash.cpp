@@ -2,6 +2,7 @@
 
 #include "customs/auton_select.hpp"
 #include "customs/boot_log.hpp"
+#include "customs/dash_config.hpp"
 #include "customs/objDeclare.hpp"
 #include "customs/ui_pages.hpp"
 #include "main.h"
@@ -31,6 +32,11 @@ inline lv_color_t col_hot() { return lv_color_hex(0xFF1A1A); }
 inline lv_color_t col_dim() { return lv_color_hex(0x22262C); }
 inline lv_color_t col_arc_bg() { return lv_color_hex(0x1A080A); }
 inline lv_color_t col_edge() { return lv_color_hex(0x3A0004); }
+// Neon / night-glow palette
+inline lv_color_t col_neon_g() { return lv_color_hex(0x22FF66); }
+inline lv_color_t col_neon_r() { return lv_color_hex(0xFF2040); }
+inline lv_color_t col_neon_y() { return lv_color_hex(0xFFD400); }
+inline lv_color_t col_gray() { return lv_color_hex(0x6A6E76); }
 
 rd_view_t* view_ = nullptr;
 lv_obj_t* parent_ = nullptr;
@@ -125,21 +131,40 @@ lv_color_t temp_color(double c) {
     return col_text();
 }
 
-lv_color_t conf_color(int c) {
-    if (c >= 80) return col_text();
-    if (c >= 50) return col_muted();
-    if (c >= 25) return col_warn();
-    return col_hot();
+// DIST: inch≈999 → gray; conf>50 green; conf<20 yellow; else red.
+lv_color_t dist_color(float inches, int conf) {
+    if (inches >= 998.5f || inches < 0.0f) return col_gray();
+    if (conf > 50) return col_neon_g();
+    if (conf < 20) return col_neon_y();
+    return col_neon_r();
+}
+
+// Batt: <40 yellow, 40–80 red, >80 green.
+lv_color_t batt_color(int pct) {
+    if (pct > 80) return col_neon_g();
+    if (pct < 40) return col_neon_y();
+    return col_neon_r();
 }
 
 void set_tach_pct(int pct, const char* center_text) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    if (tach_ != nullptr) lv_arc_set_value(tach_, pct);
-    set_cached(tach_val_, cache_tach_, sizeof(cache_tach_), center_text);
-    if (tach_val_ != nullptr) {
-        style_text(tach_val_, pct < 30 ? col_hot() : (pct < 50 ? col_warn() : col_text()));
+    const lv_color_t c = live_ready_ ? batt_color(pct) : col_accent_hi();
+    if (tach_ != nullptr) {
+        lv_arc_set_value(tach_, pct);
+        lv_obj_set_style_arc_color(tach_, c, LV_PART_INDICATOR);
     }
+    set_cached(tach_val_, cache_tach_, sizeof(cache_tach_), center_text);
+    if (tach_val_ != nullptr) style_text(tach_val_, c);
+    if (tach_unit_ != nullptr && live_ready_) style_text(tach_unit_, c);
+}
+
+void center_tach_readout() {
+    // Keep % number dead-center in the arc ring.
+    if (tach_ == nullptr) return;
+    if (tach_val_ != nullptr) lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, -4);
+    if (tach_unit_ != nullptr) lv_obj_align_to(tach_unit_, tach_, LV_ALIGN_CENTER, 0, 18);
+    if (boot_tag_ != nullptr) lv_obj_align_to(boot_tag_, tach_, LV_ALIGN_CENTER, 0, 36);
 }
 
 void place_tach_center() {
@@ -151,16 +176,12 @@ void place_tach_center() {
         lv_obj_set_size(tach_, sz, sz);
         lv_obj_set_pos(tach_, x, y);
     }
-    if (tach_val_ != nullptr) lv_obj_set_pos(tach_val_, x + 62, y + 70);
-    if (tach_unit_ != nullptr) {
-        lv_label_set_text(tach_unit_, "LOAD");
-        lv_obj_set_pos(tach_unit_, x + 78, y + 108);
-    }
+    if (tach_unit_ != nullptr) lv_label_set_text(tach_unit_, "LOAD");
     if (boot_tag_ != nullptr) {
         lv_label_set_text(boot_tag_, "CAL");
         style_text(boot_tag_, col_accent_hi());
-        lv_obj_set_pos(boot_tag_, x + 82, y + 128);
     }
+    center_tach_readout();
     // No brand text during boot / calibrate.
     if (brand_ytt_ != nullptr) lv_obj_add_flag(brand_ytt_, LV_OBJ_FLAG_HIDDEN);
     if (brand_type_ != nullptr) lv_obj_add_flag(brand_type_, LV_OBJ_FLAG_HIDDEN);
@@ -174,16 +195,12 @@ void place_tach_left_batt() {
         lv_obj_set_size(tach_, sz, sz);
         lv_obj_set_pos(tach_, x, y);
     }
-    if (tach_val_ != nullptr) lv_obj_set_pos(tach_val_, x + 42, y + 52);
-    if (tach_unit_ != nullptr) {
-        lv_label_set_text(tach_unit_, "%");
-        lv_obj_set_pos(tach_unit_, x + 68, y + 88);
-    }
+    if (tach_unit_ != nullptr) lv_label_set_text(tach_unit_, "%");
     if (boot_tag_ != nullptr) {
         lv_label_set_text(boot_tag_, "BATT");
         style_text(boot_tag_, col_muted());
-        lv_obj_set_pos(boot_tag_, x + 56, y + 108);
     }
+    center_tach_readout();
     if (brand_ytt_ != nullptr) {
         lv_obj_clear_flag(brand_ytt_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_set_pos(brand_ytt_, 8, 4);
@@ -213,7 +230,7 @@ void style_tach_arc(lv_obj_t* arc) {
 void create_tach(lv_obj_t* parent) {
     tach_ = lv_arc_create(parent);
     style_tach_arc(tach_);
-    tach_val_ = make_label(parent, "0", 0, 0, col_text(), &lv_font_montserrat_24);
+    tach_val_ = make_label(parent, "0", 0, 0, col_text(), &lv_font_montserrat_48);
     tach_unit_ = make_label(parent, "LOAD", 0, 0, col_muted(), &lv_font_montserrat_12);
     boot_tag_ = make_label(parent, "CAL", 0, 0, col_accent_hi(), &lv_font_montserrat_12);
 }
@@ -416,16 +433,12 @@ void refresh() {
     if (auton.size() > 16) auton.resize(16);
     set_cached(hdr_auton_, cache_auton_, sizeof(cache_auton_), auton.c_str());
 
-    // Left gauge = battery %
+    // Left gauge = battery % (center readout + neon by level).
     const int batt = static_cast<int>(pros::battery::get_capacity());
     char bb[8];
     std::snprintf(bb, sizeof(bb), "%d", batt);
     set_tach_pct(batt, bb);
-    if (tach_ != nullptr) {
-        lv_obj_set_style_arc_color(tach_,
-                                   batt < 30 ? col_hot() : (batt < 50 ? col_warn() : col_accent_hi()),
-                                   LV_PART_INDICATOR);
-    }
+    center_tach_readout();
 
     const auto mi = mallinfo();
     std::size_t free_b = mi.fordblks;
@@ -461,7 +474,7 @@ void refresh() {
         char b[32];
         std::snprintf(b, sizeof(b), "%s\n%.1f\n%d", tag, inches, conf);
         if (set_cached(lab, cache, n, b) || lab != nullptr) {
-            style_text(lab, conf_color(conf));
+            style_text(lab, dist_color(inches, conf));
         }
     };
     fill_dist(dist_f_, cache_df_, sizeof(cache_df_), "F", dist_front, static_cast<float>(get_kf_dist(dist_front)));
@@ -469,27 +482,16 @@ void refresh() {
     fill_dist(dist_l_, cache_dl_, sizeof(cache_dl_), "L", dist_left, static_cast<float>(get_kf_dist(dist_left)));
     fill_dist(dist_r_, cache_dr_, sizeof(cache_dr_), "R", dist_right, static_cast<float>(get_kf_dist(dist_right)));
 
-    const double lf = leftMotors.get_temperature(0);
-    const double lm = leftMotors.get_temperature(1);
-    const double lb = leftMotors.get_temperature(2);
-    const double rf = rightMotors.get_temperature(0);
-    const double rm = rightMotors.get_temperature(1);
-    const double rb = rightMotors.get_temperature(2);
-    std::snprintf(buf, sizeof(buf), "%.0f/%.0f/%.0f %.0f/%.0f/%.0f", lf, lm, lb, rf, rm, rb);
+    // Temp sources: edit include/customs/dash_config.hpp
+    double drive_max = 0;
+    dash_config::format_drive_temps(buf, sizeof(buf), &drive_max);
     set_cached(drive_vals_, cache_drive_, sizeof(cache_drive_), buf);
-    if (drive_vals_ != nullptr) {
-        style_text(drive_vals_, temp_color(std::max({lf, lm, lb, rf, rm, rb})));
-    }
+    if (drive_vals_ != nullptr) style_text(drive_vals_, temp_color(drive_max));
 
-    const double il = left_intake.get_temperature();
-    const double ir = right_intake.get_temperature();
-    const double lo = low_roller.get_temperature();
-    const double hi = high_roller.get_temperature();
-    std::snprintf(buf, sizeof(buf), "%.0f/%.0f %.0f/%.0f", il, ir, lo, hi);
+    double mech_max = 0;
+    dash_config::format_mech_temps(buf, sizeof(buf), &mech_max);
     set_cached(mech_vals_, cache_mech_, sizeof(cache_mech_), buf);
-    if (mech_vals_ != nullptr) {
-        style_text(mech_vals_, temp_color(std::max({il, ir, lo, hi})));
-    }
+    if (mech_vals_ != nullptr) style_text(mech_vals_, temp_color(mech_max));
 }
 
 } // namespace telem_dash

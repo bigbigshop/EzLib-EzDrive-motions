@@ -33,68 +33,24 @@ lv_obj_t* anim_img = nullptr;
 int anim_frame = 0;
 uint32_t last_frame_ms = 0;
 bool anim_was_on = false;
+bool views_btn_hidden = false;
 
-// Robodash top-right view-menu button (32×32 @ TOP_RIGHT). Replace stack icon
-// with a blinking red status dot — no public robodash API for this.
-lv_obj_t* view_menu_dot = nullptr;
-lv_timer_t* view_menu_blink_timer = nullptr;
-bool view_menu_dot_ready = false;
-
-lv_obj_t* find_robodash_views_btn() {
+// Hide robodash top-right view-switcher (32×32 @ TOP_RIGHT).
+bool hide_robodash_views_btn() {
+    if (views_btn_hidden) return true;
     lv_obj_t* scr = lv_scr_act();
-    if (scr == nullptr) return nullptr;
+    if (scr == nullptr) return false;
     const uint32_t n = lv_obj_get_child_cnt(scr);
     for (uint32_t i = 0; i < n; ++i) {
         lv_obj_t* ch = lv_obj_get_child(scr, i);
         if (ch == nullptr) continue;
         if (lv_obj_get_width(ch) != 32 || lv_obj_get_height(ch) != 32) continue;
-        // core.cpp: align TOP_RIGHT, -4, 4 → roughly x≈444, y≈4 on 480×240
         if (lv_obj_get_x(ch) < 430 || lv_obj_get_y(ch) > 12) continue;
-        return ch;
+        lv_obj_add_flag(ch, LV_OBJ_FLAG_HIDDEN);
+        views_btn_hidden = true;
+        return true;
     }
-    return nullptr;
-}
-
-void view_menu_blink_cb(lv_timer_t* timer) {
-    lv_obj_t* dot = static_cast<lv_obj_t*>(timer->user_data);
-    if (dot == nullptr) return;
-    const lv_opa_t cur = lv_obj_get_style_bg_opa(dot, 0);
-    lv_obj_set_style_bg_opa(dot, cur > LV_OPA_50 ? LV_OPA_30 : LV_OPA_COVER, 0);
-}
-
-bool ensure_view_menu_blink_dot() {
-    if (view_menu_dot != nullptr) return true;
-
-    lv_obj_t* btn = find_robodash_views_btn();
-    if (btn == nullptr) return false;
-    view_menu_dot_ready = true; // found chrome; don't keep scanning every frame
-
-    // Hide stock stack / symbol children; keep the button for clicks.
-    const uint32_t n = lv_obj_get_child_cnt(btn);
-    for (uint32_t i = 0; i < n; ++i) {
-        lv_obj_t* ch = lv_obj_get_child(btn, i);
-        if (ch != nullptr) lv_obj_add_flag(ch, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    // Soften chrome so the red dot reads clearly.
-    lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
-    lv_obj_set_style_border_opa(btn, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_shadow_opa(btn, LV_OPA_TRANSP, 0);
-
-    view_menu_dot = lv_obj_create(btn);
-    if (view_menu_dot == nullptr) return false;
-    lv_obj_set_size(view_menu_dot, 14, 14);
-    lv_obj_set_style_radius(view_menu_dot, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_bg_color(view_menu_dot, lv_color_hex(0xE53935), 0);
-    lv_obj_set_style_bg_opa(view_menu_dot, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(view_menu_dot, 0, 0);
-    lv_obj_set_style_pad_all(view_menu_dot, 0, 0);
-    lv_obj_clear_flag(view_menu_dot, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(view_menu_dot, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_align(view_menu_dot, LV_ALIGN_CENTER, 0, 0);
-
-    view_menu_blink_timer = lv_timer_create(view_menu_blink_cb, 450, view_menu_dot);
-    return true;
+    return false;
 }
 
 bool ensure_anim_view() {
@@ -170,14 +126,13 @@ void uiTask_fn() {
 
     while (true) {
         uint32_t now = pros::millis();
-        // After robodash chrome exists, swap top-right stack icon → blinking red dot.
-        if (view_menu_dot == nullptr && (now - boot_ms) >= 400 && (now - boot_ms) < 8000) {
-            if (ensure_view_menu_blink_dot()) {
-                boot_log::log("uiTask:view_menu_dot ok");
+        // Hide robodash view menu once chrome exists.
+        if (!views_btn_hidden && (now - boot_ms) >= 400 && (now - boot_ms) < 8000) {
+            if (hide_robodash_views_btn()) {
+                boot_log::log("uiTask:views_btn hidden");
             }
         }
-        // PID is NOT auto-started — mutually exclusive with Dash (X+A / Dash PID btn).
-        // Robot anim disabled at boot path; still gated by autoChange inside.
+        // Robot anim gated by autoChange inside.
         tick_robot_anim(now);
 
         // Controller text. Print a changed line only — never clear() on a timer.

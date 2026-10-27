@@ -327,19 +327,16 @@ void opcontrol() {
 
             
 
+            // Auton cycle only — do NOT zero pose outside PID tuner.
             if(controller.get_digital(DIGITAL_LEFT)) {
                 autoChange = false;
                 auton_select::prev();
-                ezPID.set_pose(0, 0, 0);
-                ezPID.reset_pid();
-                pros::delay(300); // delay to prevent multiple presses
+                pros::delay(300);
             }
             if(controller.get_digital(DIGITAL_RIGHT)) {
                 autoChange = false;
                 auton_select::next();
-                ezPID.set_pose(0, 0, 0);
-                ezPID.reset_pid();
-                pros::delay(300); // delay to prevent multiple presses
+                pros::delay(300);
             }
 
             if (controller.get_digital(DIGITAL_B) && controller.get_digital(DIGITAL_DOWN)) {
@@ -348,23 +345,21 @@ void opcontrol() {
             }
             if (controller.get_digital(DIGITAL_Y) && controller.get_digital(DIGITAL_DOWN)) {                
                 chassis.moveToPose(0,0,0,2000,{false,3,0.2,100});
-                //chassis.waitUntilDone();
-                //wallReset('X', -40, 0, 1500);
-                //chassis.setPose(getRealPose(0, 17.8, dist_left, -1), getRealPose(0, 33.4, dist_back, -1), 0);
             }
             if(controller.get_digital_new_press(DIGITAL_UP)) {
-                // 1. 強制停止當前任務
                 ezPID.cancel_movement(); 
-                // 2. 重置 PID 內部數據與 current_traveled
                 ezPID.reset_pid(); 
-                // 3. 震動一下提醒 Reset 成功
                 controller.rumble("."); 
                 pros::delay(50); 
             }
-            if(controller.get_digital(DIGITAL_DOWN)) {
-                //chassis.setPose(0, 0, 0);
-                ui_pages::show_dash();
-                autoChange = false;
+            // DOWN: reset traveled + return to Dash
+            if(controller.get_digital_new_press(DIGITAL_DOWN)) {
+                if (!controller.get_digital(DIGITAL_B) && !controller.get_digital(DIGITAL_Y)) {
+                    ezPID.reset_pid(); // clears current_traveled baseline
+                    ui_pages::show_dash();
+                    autoChange = false;
+                    controller.rumble(".");
+                }
             }            
         }        
         
