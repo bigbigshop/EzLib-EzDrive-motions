@@ -278,13 +278,19 @@ void refresh() {
 
     lv_mem_monitor_t mon{};
     lv_mem_monitor(&mon);
-    const uint32_t used = mon.total_size - mon.free_size;
-    const unsigned pct =
-        mon.total_size > 0 ? static_cast<unsigned>((used * 100U) / mon.total_size) : 0;
-    std::snprintf(buf, sizeof(buf), "LVGL:%u%%", pct);
-    set_cached(hdr_lvgl_, cache_lvgl_, sizeof(cache_lvgl_), buf);
-    if (hdr_lvgl_ != nullptr) {
-        style_text(hdr_lvgl_, pct >= 85 ? col_hot() : (pct >= 70 ? col_warn() : col_muted()));
+    // LV_MEM_CUSTOM=1: monitor totals are 0 — label as malloc-backed.
+    if (mon.total_size == 0) {
+        std::snprintf(buf, sizeof(buf), "LVGL:malloc");
+        set_cached(hdr_lvgl_, cache_lvgl_, sizeof(cache_lvgl_), buf);
+        if (hdr_lvgl_ != nullptr) style_text(hdr_lvgl_, col_muted());
+    } else {
+        const uint32_t used = mon.total_size - mon.free_size;
+        const unsigned pct = static_cast<unsigned>((used * 100U) / mon.total_size);
+        std::snprintf(buf, sizeof(buf), "LVGL:%u%%", pct);
+        set_cached(hdr_lvgl_, cache_lvgl_, sizeof(cache_lvgl_), buf);
+        if (hdr_lvgl_ != nullptr) {
+            style_text(hdr_lvgl_, pct >= 85 ? col_hot() : (pct >= 70 ? col_warn() : col_muted()));
+        }
     }
 
     const auto pose = chassis.getPose();

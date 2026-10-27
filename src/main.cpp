@@ -112,7 +112,9 @@ ez_compat::PidTuner pidTuner(ezPID);
 void initialize() {
     // SD first — before ANY robodash/LVGL view. Retries ~2s (card often late).
     boot_log::ensure_sd("pre_robodash");
-    boot_log::log("initialize:enter branch=LVGL-128KB-HEAP expect_total=32768");
+    // LV_MEM_CUSTOM=1: pool via malloc (no static 32/128KB BSS). total from
+    // lv_mem_monitor may be 0 — look for boot lines + live UI instead.
+    boot_log::log("initialize:enter LV_MEM_CUSTOM=1 malloc-pool");
 
     // Deferred robodash ctors (were global → blank screen / no SD log).
     boot_log::log("initialize:new Selector");
