@@ -47,7 +47,6 @@
 #include "customs/controls.hpp"
 #include "ezlib/monitor.hpp"
 #include "ezlib/boot_log.hpp"
-#include "robodash/api.h"
 //#include "wkf.hpp"
 #include "customs/fsm.hpp"
 #include "ezlib/ez_compat.hpp"

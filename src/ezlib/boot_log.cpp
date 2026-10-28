@@ -13,12 +13,17 @@ namespace {
 constexpr const char* k_path = "/usd/boot_debug.log";
 constexpr const char* k_header = "ms,msg\n";
 
+// Do NOT printf/fflush(stdout) during boot.
+// Crash signature on this branch (User Initialization):
+//   PC in cobs_encode_measure ← ser_write_r (PROS USB serial / COBS)
+// Concurrent or early stdout writes hit COBS with a bad buffer/length and
+// data-abort. SD breadcrumbs are enough to locate freezes.
+
 // Raw write — do NOT require usd_is_installed() (often false/too early at boot).
 bool write_line(const char* line) {
     if (line == nullptr) return false;
     std::FILE* f = std::fopen(k_path, "a");
     if (f == nullptr) return false;
-    // Header only when file empty.
     if (std::ftell(f) == 0) {
         std::fputs(k_header, f);
     }
@@ -34,8 +39,6 @@ void emit(const char* line) {
     (void)line;
     return;
 #else
-    std::printf("%s\n", line);
-    std::fflush(stdout);
     write_line(line);
 #endif
 }
@@ -54,8 +57,6 @@ void ensure_sd(const char* tag) {
                       tag != nullptr ? tag : "?", i,
                       sd_log::card_present() ? 1 : 0);
         if (write_line(line)) {
-            std::printf("%s\n", line);
-            std::fflush(stdout);
             log("sd_probe OK after try=%d", i);
             return;
         }
@@ -93,7 +94,7 @@ __attribute__((constructor(101))) static void boot_log_very_early() {
     std::FILE* f = std::fopen("/usd/boot_debug.log", "a");
     if (f == nullptr) return;
     if (std::ftell(f) == 0) std::fputs("ms,msg\n", f);
-    std::fputs("0,CTOR_early_before_robodash\n", f);
+    std::fputs("0,CTOR_early_before_dash\n", f);
     std::fflush(f);
     std::fclose(f);
 }

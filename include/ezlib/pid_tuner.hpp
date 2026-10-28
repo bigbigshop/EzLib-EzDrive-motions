@@ -3,7 +3,6 @@
 #include "ezlib/ez_compat.hpp"
 #include "pros/misc.hpp"
 #include "liblvgl/lvgl.h"
-#include "robodash/api.h"
 
 namespace ez_compat {
 
@@ -15,13 +14,14 @@ class PidTuner {
         explicit PidTuner(EzDrive& drive) : drive(drive) {}
 
         void start();
-        void focus(); // rd_view_focus PID page (no-op if not started)
-        bool alive() const { return view_ != nullptr; }
+        void focus(); // show PID overlay
+        void hide();  // hide PID overlay
+        bool alive() const { return page_ != nullptr; }
         bool controller_mode() const { return controller_mode_; }
         void toggle_controller_mode();
         // Stop controller mode / offset spins (keeps PID page alive).
         void force_off();
-        // Match mode / teardown: force_off + delete PID view.
+        // Match mode / teardown: force_off + delete PID overlay.
         // Call start() again after leaving field control to recreate.
         void release_ui();
         void handle_controller(pros::Controller& controller);
@@ -30,6 +30,7 @@ class PidTuner {
         void format_controller(char line0[32], char line1[32], char line2[32]) const;
 
     private:
+        void build_ui(lv_obj_t* parent);
         enum Field : int {
             F_DRIVE_P = 0,
             F_DRIVE_I,
@@ -54,7 +55,7 @@ class PidTuner {
         bool started_ = false;
         bool offset_running_ = false;
         int field_ = 0;
-        rd_view_t* view_ = nullptr;
+        lv_obj_t* page_ = nullptr; // fullscreen overlay on active screen
         lv_timer_t* timer_ = nullptr;
         lv_obj_t* field_label_ = nullptr;
         lv_obj_t* value_label_ = nullptr;

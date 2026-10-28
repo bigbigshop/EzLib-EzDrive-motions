@@ -183,7 +183,7 @@ Brain Dash 嘅 **DRV**／**MCH** 兩行溫度**只**由 `include/customs/dash_co
 
 **換邊／改順序**：只改對應 `get_temperature(...)` 同註解即可。
 
-**加一粒新機構馬達（例）**
+**加一粒新結構馬達（例）**
 
 ```cpp
 // 1) include/customs/objDeclare.hpp

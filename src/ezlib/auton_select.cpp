@@ -14,7 +14,7 @@ void persist() {
     if (routines_.empty()) return;
     FILE* f = std::fopen("/usd/auton_sel.txt", "w");
     if (f == nullptr) return;
-    std::fprintf(f, "%zu\n", static_cast<unsigned long>(index_));
+    std::fprintf(f, "%lu\n", static_cast<unsigned long>(index_));
     std::fclose(f);
 }
 

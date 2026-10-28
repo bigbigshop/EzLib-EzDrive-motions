@@ -9,7 +9,8 @@ namespace ui_pages {
 
 void show_dash() {
     boot_log::log("ui_pages:show_dash");
-    // Keep PID page alive — only focus Dash.
+    // Hide standalone PID overlay if present; keep page allocated.
+    pidTuner.hide();
     telem_dash::start();
     if (telem_dash::ready()) {
         telem_dash::focus();
@@ -20,8 +21,12 @@ void show_dash() {
 
 void show_pid() {
     boot_log::log("ui_pages:show_pid");
-    // Keep Dash alive — only focus PID.
+    // Keep Dash alive underneath — uncover PID overlay.
     pidTuner.start();
+    if (!pidTuner.alive()) {
+        boot_log::log("ui_pages:show_pid FAIL");
+        return;
+    }
     pidTuner.focus();
 }
 

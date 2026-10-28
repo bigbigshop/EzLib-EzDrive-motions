@@ -3,7 +3,9 @@
 #include "ezlib/telem_dash.hpp"
 #include "ezlib/ui_pages.hpp"
 #include "lemlib/api.hpp" // IWYU pragma: keep
+#include "lemlib/logger/logger.hpp"
 #include "ezlib/pid_tuner.hpp"
+#include "pros/apix.h"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -14,90 +16,56 @@ bool odomIsUp = false;
 bool odomUpRunning = false;
 
 // =======================================================
-// Offsets (inch) 
+// 距離感測器相對底盤中心之偏移（吋）— 供 relocate／auton 使用
 // =======================================================
 const SensorOffset OFF_FRONT = { -5.31,  5.39 };
 const SensorOffset OFF_BACK  = { -2.95, -6.81 };
 const SensorOffset OFF_LEFT  = { -5.94,  3.50 };
 const SensorOffset OFF_RIGHT = {  5.90,  3.50 };
 
-
-// controller
 pros::Controller controller(pros::E_CONTROLLER_MASTER);
-// motor groups
-pros::MotorGroup rightMotors({11, 12, 13},	pros::MotorGearset::blue); // left motor group - ports 3 (reversed), 4, 5 (reversed)
-pros::MotorGroup leftMotors({-14, -15, -16}, pros::MotorGearset::blue); // right motor group - ports 6, 7, 9 (reversed)
 
-// Inertial Sensor on port 10
-pros::Imu imu(5);
+// ----- 底盤馬達（變更 port／齒輪比請修改此處）-----
+// 負數 = 反轉。順序 = dash_config 溫度 index 0/1/2。
+pros::MotorGroup rightMotors({11, 12, 13}, pros::MotorGearset::blue);  // 右：前／中／後
+pros::MotorGroup leftMotors({-14, -15, -16}, pros::MotorGearset::blue); // 左：前／中／後
 
-// tracking wheels
-// horizontal tracking wheel encoder. Rotation sensor, port 17,not reversed
-pros::Rotation horizontalEnc(-21);
-// vertical tracking wheel encoder. Rotation sensor, port 16, not reversed
-pros::Rotation verticalEnc(10);
-// horizontal tracking wheel. 2.75" diameter, 5.75" offset, back of the robot (negative)
-lemlib::TrackingWheel horizontal(&horizontalEnc, lemlib::Omniwheel::NEW_2, -5.39);
-// vertical tracking wheel. 2.75" diameter, 2.5" offset, left of the robot (negative)
-lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2,-0.708);
+pros::Imu imu(5); // IMU 埠號
 
-// drivetrain settings
-lemlib::Drivetrain drivetrain(&leftMotors, // left motor group
-                              &rightMotors, // right motor group
-                              11.45, // 10 inch track width
-                              lemlib::Omniwheel::NEW_325, // using new 4" omnis
-                              360, // drivetrain rpm is 360
-                              8 // horizontal drift is 2. If we had traction wheels, it would have been 8
+// 追蹤輪硬體（可接入 OdomSensors；目前 LemLib odom 僅使用 IMU）
+pros::Rotation horizontalEnc(-21); // 橫向，port 21 反轉
+pros::Rotation verticalEnc(10);    // 縱向，port 10
+lemlib::TrackingWheel horizontal(&horizontalEnc, lemlib::Omniwheel::NEW_2, -5.39); // 直徑／偏移（吋）
+lemlib::TrackingWheel vertical(&verticalEnc, lemlib::Omniwheel::NEW_2, -0.708);
+
+lemlib::Drivetrain drivetrain(&leftMotors,
+                              &rightMotors,
+                              11.45,                      // 輪距（吋）
+                              lemlib::Omniwheel::NEW_325, // 3.25" omni
+                              360,                       // 底盤 rpm
+                              8                          // horizontal drift
 );
 
-// sensors for odometry
-lemlib::OdomSensors sensors(nullptr, // vertical tracking wheel
-                            nullptr, // vertical tracking wheel 2, set to nullptr as we don't have a second one
-                            nullptr, // horizontal tracking wheel
-                            nullptr, // horizontal tracking wheel 2, set to nullptr as we don't have a second one
-                            &imu // inertial sensor
-);
+// LemLib odom：目前僅使用 IMU（追蹤輪尚未接入）
+lemlib::OdomSensors sensors(nullptr, // 縱向追蹤輪
+                            nullptr, // 縱向 2
+                            nullptr, // 橫向追蹤輪
+                            nullptr, // 橫向 2
+                            &imu);
 
-// input curve for throttle input during driver control
-lemlib::ExpoDriveCurve throttleCurve(3, // joystick deadband out of 127
-                                     8, // minimum output where drivetrain will move out of 127
-                                     1 // expo curve gain
-);
+// 遙控油門曲線（deadband／最小輸出／expo）
+lemlib::ExpoDriveCurve throttleCurve(3, 8, 1);
+// 遙控轉向曲線
+lemlib::ExpoDriveCurve steerCurve(3, 8, 1);
 
-// input curve for steer input during driver control
-lemlib::ExpoDriveCurve steerCurve(3, // joystick deadband out of 127
-                                  8, // minimum output where drivetrain will move out of 127
-                                  1 // expo curve gain
-);
-// lateral PID controller
-lemlib::ControllerSettings lateral_controller(0, // proportional gain (kP)
-                                              0.0849, // integral gain (kI)
-                                              0.5, // derivative gain (kD)
-                                              3, // anti windup
-                                              0.5, // small error range, in inches
-                                              100, // small error range timeout, in milliseconds
-                                              3, // large error range, in inches
-                                              500, // large error range timeout, in milliseconds
-                                              20 // maximum acceleration (slew)
-);
+// Chassis 建構所需之 placeholder。已 bind ezPID 後，moveTo*／turnTo*／pursuit 皆使用 ezPID，無須調整此處。
+lemlib::ControllerSettings lateral_controller(0, 0, 0, 0, 0, 0, 0, 0, 0);
+lemlib::ControllerSettings angular_controller(0, 0, 0, 0, 0, 0, 0, 0, 0);
 
-// angular PID controller
-lemlib::ControllerSettings angular_controller(0, // proportional gain (kP)
-                                              0.3, // integral gain (kI)
-                                              0, // derivative gain (kD)
-                                              5, // anti windup
-                                              1, // small error range, in degrees
-                                              100, // small error range timeout, in milliseconds
-                                              3, // large error range, in degrees
-                                              500, // large error range timeout, in milliseconds
-                                              0 // maximum acceleration (slew)
-);
-// create the chassis
 lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller, sensors, &throttleCurve, &steerCurve);
 
-// Tank drive: do NOT also construct pros::Motor on the same ports as leftMotors/rightMotors.
-// Duplicate handles (e.g. Motor(14) vs MotorGroup{-14}) fight reverse/encoder state and
-// can make ezPID.drive(+12) unable to move forward. xPose motors stay nullptr (x-drive off).
+// 請勿對 leftMotors／rightMotors 同一 port 再建立另一個 pros::Motor（會互相干擾 reverse／encoder）。
+// xPose 馬達維持 nullptr（關閉 x-drive）。
 ez_compat::EzDrive ezPID(chassis, drivetrain);
 ez_compat::PidTuner pidTuner(ezPID);
 /**
@@ -108,11 +76,29 @@ ez_compat::PidTuner pidTuner(ezPID);
  */
 
 void initialize() {
-    // SD first — before ANY robodash/LVGL view. Retries ~2s (card often late).
-    boot_log::ensure_sd("pre_robodash");
-    boot_log::log("initialize:enter LV_MEM_CUSTOM=1 malloc-pool");
+    // USB COBS path is unsafe on this 4.2.1 build (PC 0x0390c572).
+    // Mute LemLib logger before calibrate (IMU fail → infoSink → cout → crash;
+    // that Buffer task has no name → brain shows CURRENT TASK: ".").
+    pros::c::serctl(SERCTL_DISABLE_COBS, nullptr);
+    lemlib::infoSink()->setLowestLevel(lemlib::Level::FATAL);
+    lemlib::telemetrySink()->setLowestLevel(lemlib::Level::FATAL);
 
-    // Headless auton list (no robodash Selector page — saves LVGL heap).
+    // Controller first — no USB printf.
+    controller.clear();
+    pros::delay(50);
+    controller.print(0, 0, "%-15.15s", "YKK EzDrive");
+    pros::delay(50);
+    controller.print(1, 0, "%-15.15s", "init...");
+    pros::delay(50);
+    controller.rumble(".");
+
+    // SD breadcrumbs only (no stdout). Retries ~2s — card often late.
+    boot_log::ensure_sd("pre_dash");
+    boot_log::log("initialize:enter LV_MEM_CUSTOM=1 malloc-pool");
+    controller.print(1, 0, "%-15.15s", "auton list");
+    pros::delay(50);
+
+    // Auton 清單（更名／增減 routine 請修改此處；以 LEFT／RIGHT 切換）
     boot_log::log("initialize:auton_select");
     auton_select::init({
         {"Left Auton", &leftAuton},
@@ -123,112 +109,51 @@ void initialize() {
         {"Testing", &testing},
         {"Skills", &skill},
     });
-    ui_pages::show_dash();
-    //pros::lcd::initialize(); // initialize brain screen
-    /*
-    imu.reset(); // reset imu to 0 degrees
-    pros::delay(2000); // wait for imu to finish calibrating
-    */
-    //leftMotors.set_encoder_units_all(pros::MotorUnits::degrees);
-    //rightMotors.set_encoder_units_all(pros::MotorUnits::degrees);
 
-    // Clear then show status immediately (avoid blank controller for seconds).
-    controller.clear();
-    pros::delay(50);
-    controller.print(0, 0, "%-15.15s", "YKK 係 傻 佬");
-    pros::delay(50);
+    // initialize 不啟動 LVGL／Dash（Dash 由 opcontrol 之 telemetry_fn 啟動）
     controller.print(1, 0, "%-15.15s", "calibrating...");
     pros::delay(50);
-    controller.rumble(".");
     boot_log::log("initialize:before calibrate");
-    chassis.calibrate(); // calibrate sensors (IMU — keep robot still)
+    chassis.calibrate(); // IMU 校準 — 機器人須靜止
     boot_log::log("initialize:after calibrate");
-    // Centered boot gauge → left battery gauge + data panels.
-    telem_dash::finish_boot();
+
     controller.print(1, 0, "%-15.15s", "calibrated OK");
     pros::delay(50);
     controller.print(2, 0, "%-15.15s", "ready");
     controller.rumble("..");
     pros::delay(200);
-    ezPID.set_x_drive(false);
+    ezPID.set_x_drive(false); // false = tank；true 需額外 xPose 馬達
 
-    // 設定是否使用追蹤輪
-    //ezPID.trackingWheels(true);
-    // 馬達 Cartridge 在 LemLib Drivetrain 配置中設定
-    // [直行 PID] 控制前進後退的距離準確度
-    // P: 加大會更快到達，但過大會震盪
-    // D: 加大會減少震盪 (煞車)
-    // Start I: 當誤差小於此數值時開始積分 (通常設 0 除非有靜態阻力)
-    ezPID.set_drive_constants(8.25, 0, 42, 0); 
+    // ----- EzDrive PID（供腦上 PID tuner／ezPID.drive／turn 使用）-----
+    // set_*_constants(kP, kI, kD, startI)
+    ezPID.set_drive_constants(8.25, 0, 42, 0);   // 直行距離
+    ezPID.set_heading_constants(4, 0, 10, 0);    // 直行時航向糾偏
+    ezPID.set_turn_constants(4.1, 0, 30, 15);    // 原地轉向
 
-    // [直行修正 PID] 控制直行時 "多用力" 修正歪掉的角度
-    // 這個通常 P 不需要太大，只要能稍微修正回來即可
-    ezPID.set_heading_constants(4, 0, 10, 0);
+    // Slew：數值愈小起動愈溫和；255 = 不限制
+    ezPID.set_drive_slew(12);
+    ezPID.set_turn_slew(255);
 
-    // [轉向 PID] 控制原地旋轉
-    ezPID.set_turn_constants(4.1, 0, 30, 15);
-
-    // --- 4. 設定 Slew Rate (加速度限制) ---
-    // 數值愈小，起動愈溫和。設 255 代表不限制。
-    ezPID.set_drive_slew(12); // 直行加速度限制 (建議 8-15)
-    ezPID.set_turn_slew(255);   // 轉向加速度限制 (建議 3-8)
-
-    // Exit: small band, small settle ms, big band, big settle ms, extra slow-time ms.
-    // Last argument is NOT a derivative-only exit. 0 disables that extra timer.
-    // Drive bands are inches. Turn bands are degrees.
+    // Exit：小誤差帶、小 settle（ms）、大誤差帶、大 settle（ms）、額外慢速計時（0=關閉）
+    // 直行單位為吋；轉向單位為度
     ezPID.set_drive_exit_conditions(0.5, 100, 2, 500, 0);
     ezPID.set_turn_exit_conditions(1, 100, 3, 250, 0);
-    ezPID.set_drive_velocity_threshold(0.10);   // inches per 10ms
-    ezPID.set_turn_velocity_threshold(0.25);    // degrees per 10ms
-    ezPID.set_heading_velocity_threshold(0.25); // degrees per 10ms
-    // Defer PID page: creating LVGL views in initialize() can blank/freeze the
-    // brain when LVGL heap is large. uiTask starts it after LVGL settles.
+    ezPID.set_drive_velocity_threshold(0.10);   // 吋／10ms
+    ezPID.set_turn_velocity_threshold(0.25);    // 度／10ms
+    ezPID.set_heading_velocity_threshold(0.25); // 度／10ms
 
-    //auto_init_universal(20,USE_BACK | USE_LEFT);
-    //auto_init_universal(0); // start_theta_field = 0 (facing north)
-    //pros::delay(100);
-
-    //lv_example_tabview_2();
-    // the default rate is 50. however, if you need to change the rate, you
-    // can do the following.
-    // lemlib::bufferedStdout().setRate(...);
-    // If you use bluetooth or a wired connection, you will want to have a rate of 10ms
-
-    // for more information on how the formatting for the loggers
-    // works, refer to the fmtlib docs
-
-    // thread to for brain screen and position logging
-    /*
-    pros::Task screenTask([&]() {
-        while (true) {
-            // print robot location to the brain screen
-            
-            pros::lcd::print(0, "X: %f", chassis.getPose().x); // x
-            pros::lcd::print(1, "Y: %f", chassis.getPose().y); // y
-            pros::lcd::print(2, "Theta: %f", chassis.getPose().theta); // heading
-            // log position telemetry
-            lemlib::telemetrySink()->info("Chassis pose: {}", chassis.getPose());
-            // delay to save resources
-            pros::delay(50);
-            
-            
-        
-            pros::delay(50); // delay to save resources
-        }
-    });
-    
-    */
-   
-    // UI 任務（圖片動畫 + controller 文字分頁）見 ezlib/monitor.cpp
+    // 具名 task（避免 brain 顯示 CURRENT TASK: "."）
     boot_log::log("initialize:spawn uiTask");
-    pros::Task uiTask(uiTask_fn);
+    pros::Task uiTask(uiTask_fn, "uiTask");
 
-    pros::Task intakeTask([]{
-        while(true) {
-            updateIntakeFSM();
-            pros::delay(20);
-        }
-    });
+    pros::Task intakeTask(
+        [] {
+            while (true) {
+                updateIntakeFSM();
+                pros::delay(20);
+            }
+        },
+        "intakeTask");
     boot_log::log("initialize:exit");
 }
 
@@ -248,11 +173,7 @@ void competition_initialize() {}
 // this needs to be put outside a function
 //ASSET(example_txt); // '.' replaced with "_" to make c++ happy
 
-/**
- * Runs during auto
- *
- * This is an example autonomous routine which demonstrates a lot of the features LemLib has to offer
- */
+/** Runs the headless auton selected in auton_select. */
 bool autoStart = false;
 
 void autonomous() { 
@@ -266,22 +187,21 @@ void autonomous() {
  */
 void opcontrol() {
     boot_log::log("opcontrol:enter");
-    // Dash is created in telemetry_fn after settle; focus when ready / on DOWN.
+    // Dash 於 telemetry_fn settle 後建立；DOWN 可重新 focus
     pros::Task my_telemetry_task(telemetry_fn);
     boot_log::log("opcontrol:telemetry spawned");
 
     while (true) {
         chassis.setBrakeMode(pros::E_MOTOR_BRAKE_COAST);
 
-        // Field control: tear down Anim + PID pages once (see telemetry_fn edge).
+        // 連接場控：關閉 tuner／動畫（telemetry_fn 會拆除較重 UI）
         const bool on_field = pros::competition::is_connected();
         if (on_field) {
             pidTuner.force_off();
             autoChange = false;
         }
 
-        // Open/handle tuner BEFORE pneumaticsBtn — that helper calls
-        // get_digital_new_press(X/A/Y) and would swallow exit / Print / A-drive.
+        // 先處理 tuner（X+A），再呼叫 pneumaticsBtn——否則 X／A／Y 會被其消耗
         static bool tuner_combo_was_down = false;
         const bool tuner_combo = controller.get_digital(DIGITAL_X) && controller.get_digital(DIGITAL_A);
         bool tuner_just_opened = false;
@@ -298,89 +218,85 @@ void opcontrol() {
             if (!pidTuner.suppress_arcade()) {
                 int leftY = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_Y);
                 int leftX = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_X);
-                chassis.arcade(leftY, (leftX * 0.75));
+                chassis.arcade(leftY, (leftX * 0.75)); // 0.75 = 轉向比例，可調整
             }
         }
 
         if (odomIsUp && !odomUpRunning) {
             odomUpRunning = true;
-            matchload.set_value(true );
-            //ekf_stop();
+            matchload.set_value(true);
         }
 
+        // 練習模式按鍵綁定（場控或 tuner 啟用時不執行此段）
         if (!pidTuner.controller_mode() && !pros::competition::is_connected()) {
             int rightX = controller.get_analog(pros::E_CONTROLLER_ANALOG_RIGHT_X);
-            if (displayMenu < 0) {
-                displayMenu = 2;
-            }
-            if (displayMenu > 2) {
-                displayMenu = 0;
-            }
+            if (displayMenu < 0) displayMenu = 2;
+            if (displayMenu > 2) displayMenu = 0;
             if (rightX > 100) {
-                ++displayMenu;
+                ++displayMenu; // 右搖桿切換手掣顯示頁
                 pros::delay(300);
-            }else if (rightX < -100) {
+            } else if (rightX < -100) {
                 --displayMenu;
                 pros::delay(300);
             }
 
-            
-
-            // Auton cycle only — do NOT zero pose outside PID tuner.
-            if(controller.get_digital(DIGITAL_LEFT)) {
+            // LEFT／RIGHT：切換 auton（不會清除 pose）
+            if (controller.get_digital(DIGITAL_LEFT)) {
                 autoChange = false;
                 auton_select::prev();
                 pros::delay(300);
             }
-            if(controller.get_digital(DIGITAL_RIGHT)) {
+            if (controller.get_digital(DIGITAL_RIGHT)) {
                 autoChange = false;
                 auton_select::next();
                 pros::delay(300);
             }
 
+            // B+DOWN：手動執行目前選中之 auton
             if (controller.get_digital(DIGITAL_B) && controller.get_digital(DIGITAL_DOWN)) {
                 ui_pages::show_dash();
                 autonomous();
             }
-            if (controller.get_digital(DIGITAL_Y) && controller.get_digital(DIGITAL_DOWN)) {                
-                chassis.moveToPose(0,0,0,2000,{false,3,0.2,100});
+            // Y+DOWN：moveToPose 返回 (0,0,0)
+            if (controller.get_digital(DIGITAL_Y) && controller.get_digital(DIGITAL_DOWN)) {
+                chassis.moveToPose(0, 0, 0, 2000, {false, 3, 0.2, 100});
             }
-            if(controller.get_digital_new_press(DIGITAL_UP)) {
-                ezPID.cancel_movement(); 
-                ezPID.reset_pid(); 
-                controller.rumble("."); 
-                pros::delay(50); 
+            // UP 短按：取消運動／reset PID（按住則於下方啟動動畫）
+            if (controller.get_digital_new_press(DIGITAL_UP)) {
+                ezPID.cancel_movement();
+                ezPID.reset_pid();
+                controller.rumble(".");
+                pros::delay(50);
             }
-            // DOWN: reset traveled + return to Dash
-            if(controller.get_digital_new_press(DIGITAL_DOWN)) {
+            // DOWN：清除 traveled 並返回 Dash（非 B／Y 組合鍵）
+            if (controller.get_digital_new_press(DIGITAL_DOWN)) {
                 if (!controller.get_digital(DIGITAL_B) && !controller.get_digital(DIGITAL_Y)) {
-                    ezPID.reset_pid(); // clears current_traveled baseline
+                    ezPID.reset_pid();
                     ui_pages::show_dash();
                     autoChange = false;
                     controller.rumble(".");
                 }
-            }            
-        }        
-        
-        if (pidTuner.controller_mode()) {
-            // Intake shoulders reserved: L1/R1 turn, L2/R2 = 10spin CCW/CW.
-        } else if(controller.get_digital(DIGITAL_R1)){
-            setIntakeState(IntakeState::INTAKE);
+            }
+        }
 
-        }else if(controller.get_digital(DIGITAL_R2)){
+        if (pidTuner.controller_mode()) {
+            // tuner 啟用時：L1／R1 轉角、L2／R2 = 10 圈，不作為 intake
+        } else if (controller.get_digital(DIGITAL_R1)) {
+            setIntakeState(IntakeState::INTAKE);
+        } else if (controller.get_digital(DIGITAL_R2)) {
             setIntakeState(IntakeState::REVERSE);
-        }else if(controller.get_digital(DIGITAL_L1)){
+        } else if (controller.get_digital(DIGITAL_L1)) {
             setIntakeState(IntakeState::L2);
-        }else if(controller.get_digital(DIGITAL_L2)){
+        } else if (controller.get_digital(DIGITAL_L2)) {
             setIntakeState(IntakeState::L1);
-        }else{
+        } else {
             setIntakeState(IntakeState::STOP);
         }
-        
+
+        // 按住 UP：啟動 robot01–10 動畫（幀數／速度見 monitor.cpp）
         if (!on_field && !pidTuner.controller_mode() && controller.get_digital(DIGITAL_UP)) {
-            // Starts robot01–10 anim (single view + lv_img_set_src in monitor.cpp).
             autoChange = true;
         }
-        pros::delay(20); // delay to save resources
+        pros::delay(20);
     }
 }

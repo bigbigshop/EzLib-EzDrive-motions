@@ -5,7 +5,10 @@
 
 namespace lemlib {
 BufferedStdout::BufferedStdout()
-    : Buffer([](const std::string& text) { std::cout << text << std::flush; }) {
+    // Do NOT write std::cout on this branch. USB serial COBS (ser_write_r →
+    // cobs_encode_measure) data-aborts; LemLib's unnamed Buffer task shows as
+    // CURRENT TASK: "." on the brain when that happens (e.g. IMU calibrate warn).
+    : Buffer([](const std::string& text) { (void)text; }) {
     setRate(50);
 }
 

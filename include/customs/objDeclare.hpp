@@ -4,16 +4,16 @@
 #include "api.h"
 #include "ezlib/ez_compat.hpp"
 #include "ezlib/pid_tuner.hpp"
-#include "robodash/api.h"
+#include "liblvgl/lvgl.h"
 
-//class Chassis;
+// 底盤／EzDrive／PID：於 main.cpp 定義
 extern lemlib::Chassis chassis;
 extern ez_compat::EzDrive ezPID;
 extern ez_compat::PidTuner pidTuner;
-// Auton list is headless (auton_select) — no rd::Selector LVGL page.
 extern lemlib::TrackingWheel vertical;
 extern lemlib::TrackingWheel horizontal;
 
+// 動畫幀（flash）：src/assets/robotXX.c；更換圖片時修改對應 .c，並視需要增減 extern
 extern const lv_img_dsc_t kukuku;
 extern const lv_img_dsc_t robot01;
 extern const lv_img_dsc_t robot02;
@@ -25,20 +25,22 @@ extern const lv_img_dsc_t robot07;
 extern const lv_img_dsc_t robot08;
 extern const lv_img_dsc_t robot09;
 extern const lv_img_dsc_t robot10;
-//extern const lv_img_dsc_t team_logo;
 
 extern pros::Controller controller;
 extern pros::MotorGroup rightMotors;
 extern pros::MotorGroup leftMotors;
 extern pros::Imu imu;
 
+// ----- 以下為 header-only 硬體：變更 port／ADI 請修改此處 -----
+// 距離感測器
 inline pros::Distance dist_front(6);
 inline pros::Distance dist_back(21);
 inline pros::Distance dist_left(3);
 inline pros::Distance dist_right(9);
 
+// 結構馬達（intake／roller；溫度對應見 dash_config MCH）
 inline pros::Motor left_intake(20);
-inline pros::Motor right_intake(-17);
+inline pros::Motor right_intake(-17); // 負數 = 反轉
 inline pros::Motor low_roller(18);
 inline pros::Motor high_roller(19);
 

@@ -6,7 +6,7 @@
 #include "customs/objDeclare.hpp"
 #include "ezlib/ui_pages.hpp"
 #include "main.h"
-#include "robodash/api.h"
+#include "liblvgl/lvgl.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -38,7 +38,6 @@ inline lv_color_t col_neon_r() { return lv_color_hex(0xFF2040); }
 inline lv_color_t col_neon_y() { return lv_color_hex(0xFFD400); }
 inline lv_color_t col_gray() { return lv_color_hex(0x6A6E76); }
 
-rd_view_t* view_ = nullptr;
 lv_obj_t* parent_ = nullptr;
 
 lv_obj_t* tach_ = nullptr;
@@ -80,6 +79,15 @@ char cache_tach_[16] = {};
 
 bool live_ready_ = false;
 bool session_booted_ = false; // skip center boot after first calibrate this power-on
+char last_error_[48] = {};
+
+void set_err(const char* msg) {
+    if (msg == nullptr) {
+        last_error_[0] = '\0';
+        return;
+    }
+    std::snprintf(last_error_, sizeof(last_error_), "%s", msg);
+}
 
 void style_text(lv_obj_t* lab, lv_color_t color) {
     if (lab == nullptr) return;
@@ -333,52 +341,63 @@ void layout_live() {
 
 } // namespace
 
-void start() {
-    if (view_ != nullptr) return;
+void build_chrome(lv_obj_t* parent) {
+    lv_obj_set_style_bg_color(parent, col_bg(), 0);
+    lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
+    brand_ytt_ = make_label(parent, "YTT", 200, 4, col_accent_hi(), &lv_font_montserrat_16);
+    brand_type_ = make_label(parent, "EzLib", 234, 6, col_text(), &lv_font_montserrat_12);
+    create_tach(parent);
+}
 
-    boot_log::log("telem_dash:start begin");
-    live_ready_ = false;
-    view_ = rd_view_create("Dash");
-    if (view_ == nullptr) {
-        boot_log::log("telem_dash:start FAIL view");
-        return;
-    }
-    rd_view_set_anims(view_, RD_ANIM_OFF);
-    parent_ = rd_view_obj(view_);
-    if (parent_ == nullptr) {
-        rd_view_del(view_);
-        view_ = nullptr;
-        return;
-    }
-
-    lv_obj_set_style_bg_color(parent_, col_bg(), 0);
-    lv_obj_set_style_bg_opa(parent_, LV_OPA_COVER, 0);
-
-    brand_ytt_ = make_label(parent_, "YTT", 200, 4, col_accent_hi(), &lv_font_montserrat_16);
-    brand_type_ = make_label(parent_, "EzLib", 234, 6, col_text(), &lv_font_montserrat_12);
-    create_tach(parent_);
-
-    if (!session_booted_) {
-        place_tach_center();
-        set_tach_pct(0, "0");
-        rd_view_focus(view_);
-        boot_log::log("telem_dash:boot centered (await finish_boot sweep)");
-    } else {
-        // Re-create after field teardown — go straight to live.
-        layout_live();
-        rd_view_focus(view_);
-        boot_log::log("telem_dash:live direct");
+void poke_refresh() {
+    if (parent_ == nullptr) return;
+    lv_obj_invalidate(parent_);
+    for (int i = 0; i < 5; ++i) {
+        lv_timer_handler();
+        pros::delay(5);
     }
 }
 
+void start() {
+    if (parent_ != nullptr) return;
+
+    boot_log::log("telem_dash:start begin");
+    live_ready_ = false;
+    set_err("starting");
+
+    if (lv_disp_get_default() == nullptr) {
+        set_err("no disp");
+        boot_log::log("telem_dash:start FAIL no disp");
+        return;
+    }
+    parent_ = lv_scr_act();
+    if (parent_ == nullptr) {
+        set_err("no scr");
+        boot_log::log("telem_dash:start FAIL no scr");
+        return;
+    }
+
+    lv_obj_clean(parent_);
+    build_chrome(parent_);
+    if (!session_booted_) {
+        place_tach_center();
+        set_tach_pct(0, "0");
+        boot_log::log("telem_dash:boot centered (await finish_boot sweep)");
+    } else {
+        layout_live();
+        boot_log::log("telem_dash:live direct");
+    }
+    poke_refresh();
+    set_err("");
+}
+
 void finish_boot() {
-    if (view_ == nullptr) start();
-    if (live_ready_) return;
+    if (!ready()) start();
+    if (!ready() || live_ready_) return;
 
     boot_log::log("telem_dash:finish_boot");
     place_tach_center();
-    rd_view_focus(view_);
-    // Full 2s sweep — must finish before data panels appear.
+    poke_refresh();
     run_boot_sweep_blocking();
 
     place_tach_left_batt();
@@ -394,14 +413,14 @@ void finish_boot() {
         lv_label_set_text(boot_tag_, "BATT");
         style_text(boot_tag_, col_muted());
     }
+    poke_refresh();
     boot_log::log("telem_dash:live ready");
 }
 
 void release() {
-    if (view_ == nullptr) return;
+    if (parent_ == nullptr) return;
     boot_log::log("telem_dash:release");
-    rd_view_del(view_);
-    view_ = nullptr;
+    lv_obj_clean(parent_);
     parent_ = nullptr;
     tach_ = tach_val_ = tach_unit_ = boot_tag_ = nullptr;
     brand_ytt_ = brand_type_ = nullptr;
@@ -417,15 +436,16 @@ void release() {
 }
 
 void focus() {
-    if (view_ == nullptr) start();
-    if (view_ != nullptr) rd_view_focus(view_);
+    if (!ready()) start();
+    else poke_refresh();
 }
 
-bool ready() { return view_ != nullptr; }
+bool ready() { return parent_ != nullptr; }
 bool live() { return live_ready_; }
+const char* last_error() { return last_error_; }
 
 void refresh() {
-    if (view_ == nullptr || !live_ready_) return;
+    if (parent_ == nullptr || !live_ready_) return;
 
     char buf[64];
 

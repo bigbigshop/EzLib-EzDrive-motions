@@ -6,12 +6,13 @@
 #include "ezlib/ui_pages.hpp"
 #include "ezlib/pid_tuner.hpp"
 
+#include "liblvgl/lvgl.h"
+
 #include <cstdio>
 #include <cstring>
 #include <string>
 
-// One Anim view + one lv_img; frames stay in flash. Do NOT create 10 rd::Image
-// pages — that OOMs the 32KB LVGL heap.
+// 動畫：全螢幕 overlay + 一個 lv_img；幀資料存於 flash（src/assets/robotXX.c）
 
 bool autoChange = false;
 int displayMenu = 0;
@@ -20,50 +21,40 @@ float elapsedSec = 0;
 
 namespace {
 
-constexpr int k_frame_count = 10;
-constexpr uint32_t k_frame_ms = 20;
+// ----- 變更動畫幀數／速度請修改此處 -----
+constexpr int k_frame_count = 10;      // 須與下方 k_frames 數量一致
+constexpr uint32_t k_frame_ms = 10;    // 每幀間隔（ms）；數值愈小愈快
 
 const lv_img_dsc_t* const k_frames[k_frame_count] = {
     &robot01, &robot02, &robot03, &robot04, &robot05,
     &robot06, &robot07, &robot08, &robot09, &robot10,
 };
 
-rd_view_t* anim_view = nullptr;
+lv_obj_t* anim_page = nullptr;
 lv_obj_t* anim_img = nullptr;
 int anim_frame = 0;
 uint32_t last_frame_ms = 0;
 bool anim_was_on = false;
-bool views_btn_hidden = false;
-
-// Hide robodash top-right view-switcher (32×32 @ TOP_RIGHT).
-bool hide_robodash_views_btn() {
-    if (views_btn_hidden) return true;
-    lv_obj_t* scr = lv_scr_act();
-    if (scr == nullptr) return false;
-    const uint32_t n = lv_obj_get_child_cnt(scr);
-    for (uint32_t i = 0; i < n; ++i) {
-        lv_obj_t* ch = lv_obj_get_child(scr, i);
-        if (ch == nullptr) continue;
-        if (lv_obj_get_width(ch) != 32 || lv_obj_get_height(ch) != 32) continue;
-        if (lv_obj_get_x(ch) < 430 || lv_obj_get_y(ch) > 12) continue;
-        lv_obj_add_flag(ch, LV_OBJ_FLAG_HIDDEN);
-        views_btn_hidden = true;
-        return true;
-    }
-    return false;
-}
 
 bool ensure_anim_view() {
-    if (anim_view != nullptr && anim_img != nullptr) return true;
-    if (anim_view == nullptr) {
-        anim_view = rd_view_create("Anim");
-        if (anim_view == nullptr) return false;
-        rd_view_set_anims(anim_view, RD_ANIM_OFF);
+    if (anim_page != nullptr && anim_img != nullptr) return true;
+    lv_obj_t* scr = lv_scr_act();
+    if (scr == nullptr) return false;
+
+    if (anim_page == nullptr) {
+        anim_page = lv_obj_create(scr);
+        if (anim_page == nullptr) return false;
+        lv_obj_set_size(anim_page, 480, 240);
+        lv_obj_set_pos(anim_page, 0, 0);
+        lv_obj_clear_flag(anim_page, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(anim_page, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(anim_page, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(anim_page, 0, 0);
+        lv_obj_set_style_pad_all(anim_page, 0, 0);
+        lv_obj_add_flag(anim_page, LV_OBJ_FLAG_HIDDEN);
     }
-    lv_obj_t* parent = rd_view_obj(anim_view);
-    if (parent == nullptr) return false;
     if (anim_img == nullptr) {
-        anim_img = lv_img_create(parent);
+        anim_img = lv_img_create(anim_page);
         if (anim_img == nullptr) return false;
         lv_img_set_src(anim_img, k_frames[0]);
         // Asset is 480x270; brain is 480x240 — pin top-left, clip bottom.
@@ -77,7 +68,11 @@ void tick_robot_anim(uint32_t now) {
         autoChange && !pidTuner.controller_mode() && !pros::competition::is_connected();
 
     if (!want) {
-        anim_was_on = false;
+        if (anim_was_on) {
+            anim_was_on = false;
+            if (anim_page != nullptr) lv_obj_add_flag(anim_page, LV_OBJ_FLAG_HIDDEN);
+            ui_pages::show_dash();
+        }
         return;
     }
     if (!ensure_anim_view()) {
@@ -86,7 +81,9 @@ void tick_robot_anim(uint32_t now) {
     }
 
     if (!anim_was_on) {
-        rd_view_focus(anim_view);
+        pidTuner.hide();
+        lv_obj_clear_flag(anim_page, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(anim_page);
         anim_was_on = true;
         last_frame_ms = now;
     }
@@ -102,42 +99,30 @@ void tick_robot_anim(uint32_t now) {
 void destroy_robot_anim() {
     autoChange = false;
     anim_was_on = false;
-    if (anim_view == nullptr) return;
-    rd_view_del(anim_view);
-    anim_view = nullptr;
-    anim_img = nullptr; // owned by the view
+    if (anim_page == nullptr) return;
+    lv_obj_del(anim_page);
+    anim_page = nullptr;
+    anim_img = nullptr;
 }
 
 void uiTask_fn() {
     boot_log::log("uiTask:enter");
-    // Controller lines start quickly; PID page waits so boot stays responsive.
     pros::delay(200);
-    const uint32_t boot_ms = pros::millis();
     boot_log::log("uiTask:loop");
 
     uint32_t lastControllerTime = 0;
     static char pending[3][32] = {};
-    static bool dirty[3] = {true, true, true}; // redraw after initialize() boot text
+    static bool dirty[3] = {true, true, true};
     static int next_line = 0;
-    // Seed so first frame replaces "EzDrive boot / calibrating..." promptly.
     std::snprintf(pending[0], sizeof(pending[0]), "%-15.15s", "");
     std::snprintf(pending[1], sizeof(pending[1]), "%-15.15s", "");
     std::snprintf(pending[2], sizeof(pending[2]), "%-15.15s", "");
 
     while (true) {
         uint32_t now = pros::millis();
-        // Hide robodash view menu once chrome exists.
-        if (!views_btn_hidden && (now - boot_ms) >= 400 && (now - boot_ms) < 8000) {
-            if (hide_robodash_views_btn()) {
-                boot_log::log("uiTask:views_btn hidden");
-            }
-        }
-        // Robot anim gated by autoChange inside.
         tick_robot_anim(now);
 
-        // Controller text. Print a changed line only — never clear() on a timer.
         if (now - lastControllerTime > 60) {
-
             auto stage = [&](int line, const char* text) {
                 char buf[32];
                 std::snprintf(buf, sizeof(buf), "%-15.15s", text != nullptr ? text : "");
@@ -153,7 +138,6 @@ void uiTask_fn() {
             const bool field = pros::competition::is_connected();
 
             if (field) {
-                // Match / field-control: battery, auton, pose only — no tuner UI.
                 std::string autonName = auton_select::name();
                 std::snprintf(raw0, sizeof(raw0), "B:%3.0f C:%3.0f",
                               (double)controller.get_battery_capacity(),
@@ -201,11 +185,22 @@ void uiTask_fn() {
 
 void telemetry_fn() {
     boot_log::log("telemetry:enter");
-    // Dash already focused in initialize(); re-focus after settle in case
-    // something else stole the view during calibrate.
-    pros::delay(200);
-    boot_log::log("telemetry:show_dash");
-    ui_pages::show_dash();
+    for (int attempt = 0; attempt < 10 && !telem_dash::ready(); ++attempt) {
+        pros::delay(300);
+        boot_log::log("telemetry:finish_boot try=%d", attempt);
+        telem_dash::finish_boot();
+        if (!telem_dash::ready()) {
+            controller.print(2, 0, "%-15.15s", telem_dash::last_error());
+        }
+    }
+    if (telem_dash::ready()) {
+        ui_pages::show_dash();
+        controller.print(2, 0, "%-15.15s", "dash OK");
+        boot_log::log("telemetry:dash live");
+    } else {
+        controller.print(2, 0, "%-15.15s", telem_dash::last_error());
+        boot_log::log("telemetry:dash FAILED %s", telem_dash::last_error());
+    }
 
     static bool was_field = false;
     while (true) {
@@ -216,8 +211,7 @@ void telemetry_fn() {
                 boot_log::log("telemetry:field on — teardown heavy UI, keep Dash");
                 destroy_robot_anim();
                 pidTuner.release_ui();
-                // No Selector page — keep Type R Dash (shows auton name).
-                ui_pages::show_dash();
+                if (telem_dash::ready()) ui_pages::show_dash();
             }
             pros::delay(200);
             continue;
@@ -225,10 +219,9 @@ void telemetry_fn() {
         if (was_field) {
             was_field = false;
             boot_log::log("telemetry:field off — restore Dash");
-            ui_pages::show_dash();
+            if (telem_dash::ready()) ui_pages::show_dash();
         }
 
-        // Only refresh once boot finished (data panels exist).
         if (telem_dash::live()) {
             telem_dash::refresh();
         }

@@ -457,22 +457,7 @@ void PidTuner::refresh() {
     }
 }
 
-void PidTuner::start() {
-    if (started_) return;
-    // Dash stays alive; robodash only focuses this view.
-    started_ = true;
-    g_action_count = 0;
-
-    // Compact single-column tuner (field names on active row).
-    view_ = rd_view_create("PID");
-    if (view_ == nullptr) {
-        started_ = false;
-        return;
-    }
-    rd_view_set_anims(view_, RD_ANIM_OFF);
-    lv_obj_t* parent = rd_view_obj(view_);
-    if (parent == nullptr) return;
-
+void PidTuner::build_ui(lv_obj_t* parent) {
     lv_obj_set_style_bg_color(parent, lv_color_hex(0x121418), 0);
     lv_obj_set_style_bg_opa(parent, LV_OPA_COVER, 0);
 
@@ -524,7 +509,6 @@ void PidTuner::start() {
     add_action("h-90", ACT_TURN_NEG, 232, 152, 56);
     add_action("Print", ACT_PRINT, 296, 152, 64);
 
-    // Single action row — Dash focuses practice dashboard (PID stays allocated).
     add_action("Ctrl", ACT_CONTROLLER, 8, 188, 56);
     add_action("Pose0", ACT_POSE0, 72, 188, 56);
     add_action("L10", ACT_OFFSET_CCW, 136, 188, 48);
@@ -537,13 +521,46 @@ void PidTuner::start() {
         lv_obj_set_pos(note_, 8, 220);
         style_label(note_);
     }
+}
 
+void PidTuner::start() {
+    if (started_) return;
+    started_ = true;
+    g_action_count = 0;
+
+    lv_obj_t* scr = lv_scr_act();
+    if (scr == nullptr) {
+        started_ = false;
+        return;
+    }
+    page_ = lv_obj_create(scr);
+    if (page_ == nullptr) {
+        started_ = false;
+        return;
+    }
+    lv_obj_set_size(page_, 480, 240);
+    lv_obj_set_pos(page_, 0, 0);
+    lv_obj_clear_flag(page_, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(page_, LV_OBJ_FLAG_HIDDEN);
+
+    build_ui(page_);
     timer_ = lv_timer_create(on_timer, 100, this);
     refresh();
 }
 
 void PidTuner::focus() {
-    if (view_ != nullptr) rd_view_focus(view_);
+    if (!alive()) start();
+    if (page_ != nullptr) {
+        lv_obj_clear_flag(page_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_move_foreground(page_);
+        lv_obj_invalidate(page_);
+    }
+}
+
+void PidTuner::hide() {
+    if (page_ != nullptr) {
+        lv_obj_add_flag(page_, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 void PidTuner::toggle_controller_mode() {
@@ -578,9 +595,9 @@ void PidTuner::release_ui() {
         lv_timer_del(timer_);
         timer_ = nullptr;
     }
-    if (view_ != nullptr) {
-        rd_view_del(view_);
-        view_ = nullptr;
+    if (page_ != nullptr) {
+        lv_obj_del(page_);
+        page_ = nullptr;
     }
     field_label_ = nullptr;
     value_label_ = nullptr;

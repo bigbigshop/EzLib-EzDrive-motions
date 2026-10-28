@@ -11,5 +11,7 @@ void focus();
 bool ready();
 bool live();           // true once data panels are up
 void refresh();
+// Short ASCII reason for last start() failure ("" if ok / never tried).
+const char* last_error();
 
 } // namespace telem_dash

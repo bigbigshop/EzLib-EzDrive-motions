@@ -266,7 +266,8 @@ void lemlib::Chassis::follow(const asset& path, float lookahead, int timeout, bo
 
         // get the target velocity of the robot
         targetVel = pathPoints.at(closestPoint).theta;
-        targetVel = slew(targetVel, prevVel, lateralSettings.slew);
+        // 已 bind ezPID 時使用 ezPID.set_drive_slew；否則回退至 lateralSettings.slew
+        targetVel = slew(targetVel, prevVel, lateralSlewStep());
         prevVel = targetVel;
 
         // calculate target left and right velocities
