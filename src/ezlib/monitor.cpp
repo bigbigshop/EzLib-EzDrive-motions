@@ -83,6 +83,7 @@ void tick_robot_anim(uint32_t now) {
 
     if (!anim_was_on) {
         pidTuner.hide();
+        telem_dash::set_gauge_hidden(true);
         lv_obj_clear_flag(anim_page, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(anim_page);
         anim_was_on = true;

@@ -13,7 +13,7 @@
 | Branch | Kernel | LemLib | robodash | liblvgl | ABI |
 | --- | --- | --- | --- | --- | --- |
 | **`main`（穩定）** | 4.1.1 | 0.5.5 | 2.3.0 | 8.3.x custom | **softfp** |
-| **`ezlib_4.2.1`（實驗）** | **4.2.2** | 0.5.6（source + `angleError` fix） | 2.3.1 | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
+| **`ezlib_4.2.2`（實驗）** | **4.2.2** | 0.5.6（source + `angleError` fix） | —（standalone LVGL） | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
 
 兩邊都係 **`LV_MEM_CUSTOM=1` → `malloc`**。Brain 開機直入 **Type R Dash**；auton 用 **headless** `auton_select`。
 
@@ -31,7 +31,8 @@
 | Git 參考 | 說明 |
 | --- | --- |
 | `main` | **穩定主線**（PROS 4.1.1 / softfp）：Type R Dash、`ezlib/`、`dash_config`、malloc LVGL |
-| `ezlib_4.2.1` | **實驗**：PROS **4.2.2** hard float + LemLib 0.5.6；須場測後先考慮合入 `main` |
+| `ezlib_4.2.2` | **實驗**：PROS **4.2.2** hard float + LemLib 0.5.6 + Type R boot triple gauges；須場測後先考慮合入 `main` |
+| `ezlib_4.2.1` | 歷史支（已升為 4.2.2／改名 `ezlib_4.2.2`） |
 | `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
 | `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
 | `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
@@ -40,18 +41,25 @@
 
 ## Changelog
 
-### 2026-10-28 — branch `ezlib_4.2.1`：升 PROS **4.2.2**
+### 2026-10-28 — branch `ezlib_4.2.2`：PROS 4.2.2 + Type R boot／Dash 整理
 
-- Kernel **4.2.1 → 4.2.2**（[release](https://github.com/purduesigbots/pros/releases/tag/4.2.2)）：`common.mk` → `gnu23`／`gnu++26`；libc／libm／libpros 同步。
-- 官方推介 toolchain **15.2.1**；本機 Cursor PROS extension 仍可用 **14.3.1** 完整 build（已驗證）。
-- 保留自訂 hardfp + `LV_MEM_CUSTOM` 的 `firmware/liblvgl.a`（apply kernel **唔**覆蓋）。
+- **Kernel**：4.2.1 → **4.2.2**（[release](https://github.com/purduesigbots/pros/releases/tag/4.2.2)）；`common.mk` → `gnu23`／`gnu++26`；libc／libm／libpros 同步。ABI 繼續 **`-mfloat-abi=hard`**。
+- **Toolchain**：官方推介 **15.2.1**；Cursor PROS extension **14.3.1** 亦可完整 build（已驗證）。自訂 hardfp + `LV_MEM_CUSTOM` 的 `firmware/liblvgl.a` **唔**被 apply kernel 覆蓋。
+- **開機動畫**（`run_boot_sweep_blocking`）：splash → **三錶** sin sweep  
+  - **中**：大弧 + KM/H（無針）  
+  - **左**：細 TORQUE 弧 + Nm  
+  - **右**：細 FUEL 弧 + %  
+  之後 `place_tach_left_batt()` → 主 Dash（電量弧 **無針** + pose／DIST／DRV／MCH／RAM）。
+- **刪除無用指針 code**（`needle_`／hub／transform bar）；精簡 `telem_dash` comment。
+- **Robot 動畫**（按住 UP）：開始時 `set_gauge_hidden(true)`，避免 `refresh()` 把電量錶 `move_foreground` 透出動畫；結束 `show_dash()` 還原。
+- Branch 由 `ezlib_4.2.1` **改名** `ezlib_4.2.2`。**未合入 `main`**。
 
 ### 2026-10-28 — branch `ezlib_4.2.1`：PROS 4.2.1 hard float（實驗）
 
 - Kernel **4.2.1**、`common.mk` → **`-mfloat-abi=hard`**；libc／libm／libpros 同步。
-- robodash **2.3.1**、liblvgl **8.3.9**；官方 `liblvgl.a` 內建 ~10MB pool **唔可用** → 用 purduesigbots/liblvgl 以 **hardfp + `LV_MEM_CUSTOM=1`** 重編 `firmware/liblvgl.a`。
-- LemLib 標成 **0.5.6**：繼續 compile `src/lemlib`（保留 `ez_compat`／`bindEzDrive`）；0.5.5→0.5.6 唯一源碼改動 `angleError`（本樹已有）。**未** apply 官方 `LemLib.a`（避免同 source 重複 symbol）。
-- **未合入 `main`**：請上 Brain 驗 Dash／PID／auton 後再決定。
+- liblvgl **8.3.9**；官方 `liblvgl.a` 內建 ~10MB pool **唔可用** → 用 purduesigbots/liblvgl 以 **hardfp + `LV_MEM_CUSTOM=1`** 重編 `firmware/liblvgl.a`。
+- LemLib 標成 **0.5.6**：繼續 compile `src/lemlib`（保留 `ez_compat`／`bindEzDrive`）；**未** apply 官方 `LemLib.a`。
+- Type R auto ignition boot；standalone LVGL（唔再依賴 robodash 頁）。
 
 ### 2026-10-28 — Type R Dash 成為 `main`
 
@@ -627,36 +635,37 @@ L2/R2 十圈測試。欄位：
 
 ## Type R Dash（`telem_dash`）
 
-開機流程：
+開機流程（`ezlib_4.2.2`）：
 
-1. `telem_dash::start()` — 只顯示**置中** ignition arc（CAL／LOAD），品牌隱藏。  
-2. IMU 校正完 → blocking 0→100 掃完 → `finish_boot()`：arc 移左做 **BATT %**，揭開 pose／DIST／DRV／MCH／RAM／auton 名。  
-3. `ui_pages::show_dash()`／`show_pid()` 互斥 focus；**唔會**銷毀對方頁。
+1. `telem_dash::start()` — 黑屏等 ignition（品牌／BATT 隱藏）。  
+2. `finish_boot()` → splash → **中 KM/H + 左 TORQUE Nm + 右 FUEL %** sin sweep（全程**無針**）。  
+3. 掃完 → 左 **BATT %** 弧（無針）+ pose／DIST／DRV／MCH／RAM／auton；`live_ready_`。  
+4. `ui_pages::show_dash()`／`show_pid()` 互斥 focus；PID／robot 動畫會 `set_gauge_hidden` 避免電量透出。
 
-溫度來源集中喺 `include/customs/dash_config.hpp`（改 DRV／MCH 唔使改 `telem_dash.cpp`）。用法見上方 **Dash 溫度：`dash_config.hpp`**。
+溫度來源集中喺 `include/customs/dash_config.hpp`（改 DRV／MCH 唔使改 `telem_dash.cpp`）。
 
-**唔再用** `rd::Console::printf`（內部小 buffer 易 stack smash）。舊 Console 遙測已由 Dash 取代。
+**唔再用** robodash Console／Selector LVGL 頁。
 
 ---
 
 ## 動畫（Brain）
 
-- **一個** robodash view `Anim` + **一個** `lv_img`，timer 換 `robot01`…`robot10` src。
-- Controller 相關邏輯會把 `autoChange = false`（例如換 auton、DOWN 回 Dash）。
-- **不要**為每幀建一個 `rd::Image` 再 `.focus()`——會爆 heap／碎片。
+- Standalone LVGL overlay：`anim_page` + 一個 `lv_img`，換 `robot01`…`robot10`（按住 **UP** → `autoChange`）。
+- 開動畫：`set_gauge_hidden(true)`；關動畫／DOWN：`show_dash()` 還原電量錶。
+- Controller 換 auton、DOWN 回 Dash 會清 `autoChange`。
 
 ---
 
 ## Controller monitor（`monitor.cpp`）
 
-`initialize()` 開 `uiTask_fn`（controller 三行 + 動畫 + 隱藏 views chrome）同 telemetry 路徑刷新 **Dash**（唔再刷 Console）。
+`initialize()` 開 `uiTask_fn`（controller 三行 + robot 動畫）同 `telemetry_fn` 刷新 **Dash**。
 
 ### 設計要點
 
 - Controller **只在字變了才 `print` 一行**（`dirty[]` + round-robin），唔定時 `clear()`。
-- 場控接上：teardown Anim／Dash／PID，慳 LVGL；拔出後重建。
+- 場控接上：teardown Anim／PID，保留／還原 Dash；拔出後 `show_dash()`。
 - `displayMenu` 用右搖桿左右切頁（練習場、非 tuner）。
-- 右上 robodash views 掣會被 **隱藏**（Dash／PID 用 `ui_pages` 切）。
+- Dash／PID 用 `ui_pages` 切（standalone LVGL）。
 
 ### Controller 三行內容
 
@@ -701,7 +710,7 @@ L2/R2 十圈測試。欄位：
 | --- | --- |
 | 設定 | `include/liblvgl/lv_conf.h` → **`LV_MEM_CUSTOM 1`**（`malloc`／`free`／`realloc`） |
 | 舊靜態 pool | `LV_MEM_CUSTOM 0` + `LV_MEM_SIZE` 編進 `firmware/liblvgl.a` 先有效 |
-| ABI | `liblvgl.a` 須同 `common.mk`：`main`=softfp；`ezlib_4.2.1`=hard |
+| ABI | `liblvgl.a` 須同 `common.mk`：`main`=softfp；`ezlib_4.2.2`=hard |
 | Dash RAM 字 | `mallinfo().fordblks` +（`HeapLimit − sbrk`）≈ 系統剩餘 |
 
 紅 mon／abort 多為 LVGL object 過多、錯 thread 刪 widget、或碎裂。Dash／PID 用 focus 互斥；場控先 teardown。唔好用 `rd::Console::printf`。
