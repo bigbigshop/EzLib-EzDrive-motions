@@ -13,7 +13,7 @@
 | Branch | Kernel | LemLib | robodash | liblvgl | ABI |
 | --- | --- | --- | --- | --- | --- |
 | **`main`（穩定）** | 4.1.1 | 0.5.5 | 2.3.0 | 8.3.x custom | **softfp** |
-| **`ezlib_4.2.1`（實驗）** | 4.2.1 | 0.5.6（source + `angleError` fix） | 2.3.1 | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
+| **`ezlib_4.2.1`（實驗）** | **4.2.2** | 0.5.6（source + `angleError` fix） | 2.3.1 | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
 
 兩邊都係 **`LV_MEM_CUSTOM=1` → `malloc`**。Brain 開機直入 **Type R Dash**；auton 用 **headless** `auton_select`。
 
@@ -31,7 +31,7 @@
 | Git 參考 | 說明 |
 | --- | --- |
 | `main` | **穩定主線**（PROS 4.1.1 / softfp）：Type R Dash、`ezlib/`、`dash_config`、malloc LVGL |
-| `ezlib_4.2.1` | **實驗**：PROS 4.2.1 hard float + LemLib 0.5.6 + robodash 2.3.1；須場測後先考慮合入 `main` |
+| `ezlib_4.2.1` | **實驗**：PROS **4.2.2** hard float + LemLib 0.5.6；須場測後先考慮合入 `main` |
 | `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
 | `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
 | `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
@@ -39,6 +39,12 @@
 ---
 
 ## Changelog
+
+### 2026-10-28 — branch `ezlib_4.2.1`：升 PROS **4.2.2**
+
+- Kernel **4.2.1 → 4.2.2**（[release](https://github.com/purduesigbots/pros/releases/tag/4.2.2)）：`common.mk` → `gnu23`／`gnu++26`；libc／libm／libpros 同步。
+- 官方推介 toolchain **15.2.1**；本機 Cursor PROS extension 仍可用 **14.3.1** 完整 build（已驗證）。
+- 保留自訂 hardfp + `LV_MEM_CUSTOM` 的 `firmware/liblvgl.a`（apply kernel **唔**覆蓋）。
 
 ### 2026-10-28 — branch `ezlib_4.2.1`：PROS 4.2.1 hard float（實驗）
 
