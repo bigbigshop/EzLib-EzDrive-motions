@@ -12,6 +12,15 @@
 
 舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表、Selector／Console）已過期。
 
+### 線上模擬器（調參／理解用）
+
+| 連結 | 用途 |
+| --- | --- |
+| [pid.ykyle.eu](https://pid.ykyle.eu) | **PID 模擬器** — 睇 P／I／D、overshoot、調 `ezPID` drive／turn 增益前先建立直覺 |
+| [vex.ykyle.eu/moveToPose](https://vex.ykyle.eu/moveToPose) | **LemLib `moveToPose` 模擬器** — 調 `lead`、drift、`minSpeed`／`earlyExit`、`forwards`、目標 θ 等，睇弧線同到位行為 |
+
+模擬器唔代替場上／SD CSV 實測；實機增益仍用 Brain／controller **PID tuner** + `/usd/pid_tune_log.csv`。
+
 | Git 參考 | 說明 |
 | --- | --- |
 | `main` | **現時主線**：Type R Dash、headless auton、`ezlib/` 庫目錄、`dash_config`、malloc LVGL、cos `getRealPose` |
@@ -131,11 +140,6 @@ inline pros::adi::Pneumatics hook('B', false);
 inline pros::adi::Pneumatics matchload('C', false);
 ```
 
-**新馬達上 Dash 溫度**
-
-1. 喺 `objDeclare.hpp`（或 `main.cpp` MotorGroup）宣告。  
-2. 改 `include/customs/dash_config.hpp` 嘅 `format_drive_temps`／`format_mech_temps`（index = MotorGroup 入面次序，唔係 smart-port）。
-
 ```cpp
 // src/main.cpp（定義底盤側）
 pros::MotorGroup rightMotors({11, 12, 13}, pros::MotorGearset::blue);
@@ -145,6 +149,44 @@ pros::Imu imu(5);
 ez_compat::EzDrive ezPID(chassis, drivetrain);
 ez_compat::PidTuner pidTuner(ezPID);
 ```
+
+### Dash 溫度：`dash_config.hpp`（必改檔）
+
+Brain Dash 嘅 **DRV**／**MCH** 兩行溫度**只**由 `include/customs/dash_config.hpp` 決定——唔使改 `ezlib/telem_dash.cpp`。
+
+| Dash 行 | 函數 | 預設顯示 |
+| --- | --- | --- |
+| **DRV** | `format_drive_temps` | 左 LF/LM/LB \| 右 RF/RM/RB（`leftMotors`／`rightMotors`） |
+| **MCH** | `format_mech_temps` | L_intake／R_intake \| low／high roller |
+
+**規則**
+
+- MotorGroup 用 `get_temperature(index)`：`index` = 喺 `main.cpp` list **入面次序**（0、1、2…），**唔係** smart-port 號。  
+  例：`leftMotors({-14, -15, -16})` → index `0`=port 14、`1`=15、`2`=16。
+- 獨立 `pros::Motor` 用 `motor.get_temperature()`（無 index）。
+- `snprintf` 字串就係 Brain 上見到嘅格式；`max_out` 畀 Dash 揀顏色（最熱嗰粒）。
+
+**換邊／改順序**：只改對應 `get_temperature(...)` 同註解即可。
+
+**加一粒新機構馬達（例）**
+
+```cpp
+// 1) include/customs/objDeclare.hpp
+inline pros::Motor my_motor(8);
+
+// 2) include/customs/dash_config.hpp — format_mech_temps
+inline void format_mech_temps(char* buf, std::size_t n, double* max_out = nullptr) {
+    const double a = left_intake.get_temperature();
+    const double b = right_intake.get_temperature();
+    const double c = low_roller.get_temperature();
+    const double d = high_roller.get_temperature();
+    const double e = my_motor.get_temperature();  // 新
+    std::snprintf(buf, n, "%.0f/%.0f  |  %.0f/%.0f/%.0f", a, b, c, d, e);
+    if (max_out != nullptr) *max_out = std::max({a, b, c, d, e});
+}
+```
+
+底盤組加馬達：改 `main.cpp` 嘅 `leftMotors`／`rightMotors` list，再喺 `format_drive_temps` 加多一個 `get_temperature(新index)` 同更新 `snprintf`。
 
 **馬達注意**
 
@@ -225,9 +267,84 @@ ezPID.turn(90, 90, 1500, {.p = 4.1, .i = 0, .d = 30}, false);
 
 同一時間一個運動佔用底盤。`pidTuner` 開或 `ezPID.is_busy()` 時 arcade 關閉。
 
-### Auton 距離注意
+調增益前可用 [pid.ykyle.eu](https://pid.ykyle.eu) 模擬 PID 行為；上機再用 `pidTuner`／CSV。
 
-`src/customs/autons.cpp` 內部分舊目標仍可能是編碼器度數風格的大數字；新路線請用**英吋／度**。量度前勿把舊大數字當英吋讀。
+---
+
+## 由推機到寫 Auton（建議工作流）
+
+目標：先令 drive／turn **跟得穩**，再**人手推／開**量真實距離同航向，最後寫入 `customs/autons.cpp`。單位一律 **英吋／度**（舊碼可能仲有編碼器度數風格大數字——新路線唔好跟）。
+
+### 1. 調 PID（一次搞掂底盤）
+
+1. 插 SD（可選）、**拔場控**。  
+2. **X+A** 開 PID tuner（詳見 **PID 調校器**）。  
+3. 用 B/Y（±12″）、L1/R1（±90°）調到少震、到位準；**Print** 貼返 `initialize()`。  
+4. 可抽 CSV 同 AI 畫 error 曲線（見 **SD 卡 CSV**）。  
+5. 線上輔助：[pid.ykyle.eu](https://pid.ykyle.eu)。
+
+未調好 PID 就寫長 auton，量到嘅數都會被震盪／未到位食掉。
+
+### 2. 真實推機／開，睇 traveled 同 pose
+
+練習場、**tuner 關**：
+
+| 想睇咩 | 點做 |
+| --- | --- |
+| **直線走咗幾吋**（For PID Distance） | 右搖桿切 controller **displayMenu = 1** → 行 `D:` = `ezPID.get_traveled()`；`T:` = 航向 |
+| **場地座標 X／Y／θ** | 右搖桿切 **displayMenu = 2**；或睇 Brain **Dash** pose |
+| **清 traveled 重新量** | **DOWN**（`reset_pid` + 回 Dash）或 **UP** cancel／reset |
+| **距離牆幾吋**（量 `golden`） | Dash **DIST** 四格 |
+
+**推機量直線距離（常見）**
+
+1. 車放好開局位（或某段起點），需要時 **A**（tuner 內）或自己 `setPose`／頂牆對 0。  
+2. Controller 切 **menu 1**；按 **DOWN** 或 **UP** 清 traveled。  
+3. **人手慢慢推**（或輕開 arcade）沿路線去到下一停點。  
+4. 讀 `D:` → 呢個就係下一段 `ezPID.drive(吋, …)` 嘅距離（後退用負數）。  
+5. 轉彎：睇 menu 1／2 或 Dash 嘅 **θ**，下一段用 `ezPID.turn(絕對角, …)` 或 `turnToHeading`。
+
+**用 pose 寫曲線／長距**
+
+1. Menu **2** 或 Dash 記起點、終點嘅 `(x, y, θ)`。  
+2. 長距／弧線用 `chassis.moveToPose(x, y, θ, timeout, {forwards, … lead, maxSpeed}, false)`；參數可用 [moveToPose 模擬器](https://vex.ykyle.eu/moveToPose)。  
+3. 中段要貼牆校正：`wallReset`／`getRealPose`（見該節）；`golden` 用 Dash DIST 在正確姿態讀。
+
+### 3. 寫入 auton 程式
+
+1. 喺 `include/customs/autons.hpp` 宣告函數；`src/customs/autons.cpp` 實作。  
+2. 喺 `src/main.cpp` 的 `auton_select::init({...})` 加一項 `{"顯示名", &你的函數}`。  
+3. 練習場 **←／→** 揀 auton（名會上 Dash／手掣）；**DOWN+B** 跑一次驗證。  
+4. 一段一段加：量 → 寫 `drive`／`turn`／`moveToPose` → 跑 → 再量下一段。
+
+```cpp
+// include/customs/autons.hpp
+void myRoute();
+
+// src/customs/autons.cpp
+void myRoute() {
+    // 開局：物理對位後
+    chassis.setPose(0, 0, 0);
+    ezPID.drive(24, 100, 2000);   // 推機量到 ~24"
+    ezPID.turn(90, 100, 1500);    // 絕對航向
+    chassis.moveToPose(24, 24, 90, 3000, {.lead = 0.4, .maxSpeed = 100}, false);
+    // 中段可：
+    // chassis.setPose(getRealPose(0, goldenL, dist_left, -1),
+    //                 getRealPose(0, goldenB, dist_back, -1), 0);
+}
+
+// src/main.cpp — initialize() 內
+auton_select::init({
+    // …
+    {"My Route", &myRoute},
+});
+```
+
+### 4. 小提示
+
+- `ezPID.drive` 距離 = **沿該次開始時航向** 的英吋，唔係場地直線到某點嘅弦長（要去某 (x,y) 用 `moveToPoint`／`moveToPose`）。  
+- 推機量距時盡量跟 auton 同一開局／同一航向；轉過彎要重新 **DOWN** 清 traveled 再量下一段直線。  
+- 手掣 menu 1 嘅 `D:` 同舊站「For PID Distance」同一用途；Brain Dash 方便同時睇 pose／DIST／溫。
 
 ---
 
@@ -249,6 +366,8 @@ chassis.moveToPose(24, 24, 90, 3000, {.lead = 0.4, .maxSpeed = 100}, false);
 | `moveToPose` | drive + turn + lead | 無獨立 ezPID API 對等 |
 
 常用參數：`maxSpeed`、`minSpeed`、`earlyExitRange`、`forwards`、`lead`、`direction`。
+
+`moveToPose` 曲線／`lead`／drift／提前結束：用 [moveToPose 模擬器](https://vex.ykyle.eu/moveToPose) 互動試參（見上方 **線上模擬器**）。
 
 ---
 
@@ -368,9 +487,20 @@ chassis.setPose(
 
 `pidTuner.start()` 在 `initialize()` 呼叫。增益寫在 `ezPID` 上，與 auton／底盤 motion **同一套**。
 
-Brain **PID** 頁（compact UI）：換 field、± 調值、+12/−12、h±90、Print、Ctrl、Pose0、L10/R10（十圈）。
+Brain **PID** 頁（compact UI）：換 field、± 調值、+12/−12、h±90、Print、Ctrl、Pose0、L10/R10（十圈）。亦可 **X+A** 用 controller 調（見下）。
 
-Print 會把常數片段打到 terminal，並寫一行 SD snapshot（有卡時）。貼回 `initialize()` 範例：
+線上先建立直覺：[pid.ykyle.eu](https://pid.ykyle.eu)；`moveToPose` 參數：[vex.ykyle.eu/moveToPose](https://vex.ykyle.eu/moveToPose)。
+
+### 建議流程（練習場）
+
+1. **插 microSD**（無卡都可調，但無 CSV）。拔出場控線。  
+2. 開機等 Dash／校正完 → **X+A** 開 tuner（或 Brain 撳入 PID 頁）。  
+3. **A** 清 pose；←→ 揀 field；↑↓ 改數值。  
+4. 測直線：**B** = +12″、**Y** = −12″；測轉向：**L1／R1** = ±90°。睇震盪／overshoot／到位時間。  
+5. 滿意後 Brain 撳 **Print**（或等價）→ terminal 出一段 `set_*_constants`；**貼返** `initialize()`。有卡時同時寫一行 `print` 入 CSV。  
+6. **X** 退出 tuner。要估 tracking 偏移再跑 **L2／R2** 十圈（見 `findingOffset.csv`）。
+
+Print 貼回範例：
 
 ```cpp
 ezPID.set_drive_constants(...);
@@ -408,9 +538,9 @@ ezPID.set_turn_slew(...);
 
 ---
 
-## SD 卡
+## SD 卡 CSV：取出、畫圖、同 AI 合作
 
-路徑前綴 **`/usd/`**（PROS）。需插入 microSD。
+路徑前綴 **`/usd/`**（PROS）。需插入 microSD。檔案不存在或為空時自動寫 header，之後 **append 累積**。
 
 輔助 API（`sd_log`）：
 
@@ -420,7 +550,17 @@ bool sd_log::append_csv(const char* path, const char* header, const char* line);
 bool sd_log::append_csvf(const char* path, const char* header, const char* fmt, ...);
 ```
 
-檔案不存在或為空時自動寫 header，之後 **append 累積**。
+### 點樣攞 CSV 出嚟
+
+1. 測完後 **關 Brain 電源**（或確保唔再寫檔），抽出 microSD。  
+2. 用電腦讀卡器打開卡根目錄（或 PROS 掛載顯示嘅磁碟）。  
+3. 複製：  
+   - `pid_tune_log.csv` — drive／turn 誤差曲線  
+   - `findingOffset.csv` — 十圈 (x,y)  
+4. 可改名備份（例 `pid_tune_2026-10-28_drive12.csv`），再插返卡繼續測。  
+5. 若改過程式 CSV **header**，請刪 Brain 卡上舊檔再跑，避免欄位錯位。
+
+V5 常無 RTC：`wall_time` 可能是 `boot_<millis>`；畫圖用 **`timestamp_ms`**。
 
 ### `/usd/pid_tune_log.csv`
 
@@ -432,19 +572,35 @@ Tuner drive／turn 時約每 **15ms** 寫一行 `drive_tick`／`turn_tick`（整
 drive/turn/head 的 `kp,ki,kd,error,sm,bg,vl`,  
 `odom_x,y,theta`, `odom_theta_delta`, `imu_heading`, `imu_rotation`, `imu_rotation_delta`, `traveled`
 
-用 `timestamp_ms` 對 `drive_error`／`turn_error` 畫圖即可。若改過 header，請刪舊 CSV 再跑。
-
-V5 常無 RTC：`wall_time` 可能是 `boot_<millis>`。
-
 ### `/usd/findingOffset.csv`
 
 L2/R2 十圈測試。欄位：
 
 `timestamp_ms`, `wall_time`, `dir`（`CCW`/`CW`）, `rev`, `quarter`, `odom_x,y,theta`, `imu_heading`, `imu_rotation`
 
-用途：用每圈（或每 quarter）的 `(x,y)` fit 圓，估 tracking／旋轉中心偏移。建議 CW 與 CCW 都跑。若改過 CSV header，請刪舊檔再跑，避免欄位錯位。
+用途：用每圈（或每 quarter）的 `(x,y)` fit 圓，估 tracking／旋轉中心偏移。建議 CW 與 CCW 都跑。
 
-圖片若用 SD：converter 出 **Binary**，例如 `S:/usd/frame01.bin`（見上方宣告一節）。
+### 自己畫圖（Excel／Google Sheets／Python）
+
+- 篩 `event == drive_tick`（或 `turn_tick`）。  
+- X 軸：`timestamp_ms`（可先減第一點令 t=0）。  
+- Y 軸：對應誤差欄（drive／turn error；header 名以檔內為準）。  
+- 可另畫 `traveled`、`odom_theta`、`imu_heading` 對時間。  
+- `findingOffset`：散點 `odom_x` vs `odom_y`，分 `CW`／`CCW` 色；可 fit 圓心估偏移。
+
+### 同 AI 合作畫圖／分析（建議做法）
+
+1. 把 CSV（或截一段有問題嘅 run）一齊交俾 AI（Cursor／ChatGPT 等）。  
+2. 講清楚目標，例如：  
+   - 「呢個 `pid_tune_log.csv`：畫 `drive_tick` 嘅 error vs `timestamp_ms`，標註 overshoot／settle」  
+   - 「比較兩次 +12″ run，邊組 kp/kd 少震」  
+   - 「`findingOffset.csv` fit CW／CCW 圓心，估 tracking offset」  
+3. 請 AI 出 **Python（pandas + matplotlib／plotly）** 或 Jupyter；跑完睇圖，再決定加 P／加 D／減 I、改 exit／slew。  
+4. 把結論寫返 `initialize()` 增益；必要時再上機跑一輪 CSV 驗證。
+
+提示詞可附：本 README 欄位說明 +「EzLib tuner，單位英吋／度，約 15ms 一 tick」。AI 唔代替場感——圖係輔助，最終以車行為準。
+
+圖片若用 SD 播動畫：converter 出 **Binary**，例如 `S:/usd/frame01.bin`（見上方宣告一節）。
 
 ---
 
@@ -456,7 +612,7 @@ L2/R2 十圈測試。欄位：
 2. IMU 校正完 → blocking 0→100 掃完 → `finish_boot()`：arc 移左做 **BATT %**，揭開 pose／DIST／DRV／MCH／RAM／auton 名。  
 3. `ui_pages::show_dash()`／`show_pid()` 互斥 focus；**唔會**銷毀對方頁。
 
-溫度來源集中喺 `include/customs/dash_config.hpp`（改 DRV／MCH 唔使改 `telem_dash.cpp`）。
+溫度來源集中喺 `include/customs/dash_config.hpp`（改 DRV／MCH 唔使改 `telem_dash.cpp`）。用法見上方 **Dash 溫度：`dash_config.hpp`**。
 
 **唔再用** `rd::Console::printf`（內部小 buffer 易 stack smash）。舊 Console 遙測已由 Dash 取代。
 
