@@ -1,8 +1,17 @@
-bin/*
-.cache/*
-.d/*
-.DS_Store
+# Compiled Object files
+*.o
+*.obj
+
+# Executables
+*.bin
+*.elf
+
+# PROS
+bin/
 .vscode/
-uploads/
-tests/host/test_motions
+.cache/
 compile_commands.json
+temp.log
+temp.errors
+*.ini
+.d/

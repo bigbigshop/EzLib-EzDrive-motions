@@ -8,7 +8,14 @@
 
 `main.h` 引入 `lemlib/api.hpp` 與 `ezlib/ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
 
-此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（**`LV_MEM_CUSTOM=1` → `malloc`**，唔再食靜態 BSS pool；`liblvgl.a` 仍須 softfp）。Brain 開機直入 **Type R Dash**（中心 ignition → 校正後左側電量 + 數據）；auton 用 **headless** `auton_select`（無 `rd::Selector` 頁）。
+此樹的版本視 branch 而定：
+
+| Branch | Kernel | LemLib | robodash | liblvgl | ABI |
+| --- | --- | --- | --- | --- | --- |
+| **`main`（穩定）** | 4.1.1 | 0.5.5 | 2.3.0 | 8.3.x custom | **softfp** |
+| **`ezlib_4.2.1`（實驗）** | 4.2.1 | 0.5.6（source + `angleError` fix） | 2.3.1 | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
+
+兩邊都係 **`LV_MEM_CUSTOM=1` → `malloc`**。Brain 開機直入 **Type R Dash**；auton 用 **headless** `auton_select`。
 
 舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表、Selector／Console）已過期。
 
@@ -23,7 +30,8 @@
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | **現時主線**：Type R Dash、headless auton、`ezlib/` 庫目錄、`dash_config`、malloc LVGL、cos `getRealPose` |
+| `main` | **穩定主線**（PROS 4.1.1 / softfp）：Type R Dash、`ezlib/`、`dash_config`、malloc LVGL |
+| `ezlib_4.2.1` | **實驗**：PROS 4.2.1 hard float + LemLib 0.5.6 + robodash 2.3.1；須場測後先考慮合入 `main` |
 | `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
 | `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
 | `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
@@ -31,6 +39,13 @@
 ---
 
 ## Changelog
+
+### 2026-10-28 — branch `ezlib_4.2.1`：PROS 4.2.1 hard float（實驗）
+
+- Kernel **4.2.1**、`common.mk` → **`-mfloat-abi=hard`**；libc／libm／libpros 同步。
+- robodash **2.3.1**、liblvgl **8.3.9**；官方 `liblvgl.a` 內建 ~10MB pool **唔可用** → 用 purduesigbots/liblvgl 以 **hardfp + `LV_MEM_CUSTOM=1`** 重編 `firmware/liblvgl.a`。
+- LemLib 標成 **0.5.6**：繼續 compile `src/lemlib`（保留 `ez_compat`／`bindEzDrive`）；0.5.5→0.5.6 唯一源碼改動 `angleError`（本樹已有）。**未** apply 官方 `LemLib.a`（避免同 source 重複 symbol）。
+- **未合入 `main`**：請上 Brain 驗 Dash／PID／auton 後再決定。
 
 ### 2026-10-28 — Type R Dash 成為 `main`
 
@@ -680,7 +695,7 @@ L2/R2 十圈測試。欄位：
 | --- | --- |
 | 設定 | `include/liblvgl/lv_conf.h` → **`LV_MEM_CUSTOM 1`**（`malloc`／`free`／`realloc`） |
 | 舊靜態 pool | `LV_MEM_CUSTOM 0` + `LV_MEM_SIZE` 編進 `firmware/liblvgl.a` 先有效 |
-| ABI | `liblvgl.a` 須 `-mfloat-abi=softfp`（對齊 `common.mk`） |
+| ABI | `liblvgl.a` 須同 `common.mk`：`main`=softfp；`ezlib_4.2.1`=hard |
 | Dash RAM 字 | `mallinfo().fordblks` +（`HeapLimit − sbrk`）≈ 系統剩餘 |
 
 紅 mon／abort 多為 LVGL object 過多、錯 thread 刪 widget、或碎裂。Dash／PID 用 focus 互斥；場控先 teardown。唔好用 `rd::Console::printf`。
