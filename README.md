@@ -8,19 +8,31 @@
 
 `main.h` 引入 `lemlib/api.hpp` 與 `ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
 
-此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（`firmware/liblvgl.a` heap **128KB** softfp；須同步 `lv_conf.h`，改 header 不夠）。
+此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（**`LV_MEM_CUSTOM=1` → `malloc`**，唔再食靜態 BSS pool；`liblvgl.a` 仍須 softfp）。Brain 開機直入 **Type R Dash**（中心 ignition → 校正後左側電量 + 數據）；auton 用 **headless** `auton_select`（無 `rd::Selector` 頁）。
 
-舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表）已過期。
+舊站 [ezlib.ykyle.eu](https://ezlib.ykyle.eu/) 是較早的說明書（初始化／EzDrive／LemLib／wallReset／getRealPose 理念仍適用）。**以本 README + 倉庫原始碼為準**；站上部分範例（舊 PID 數字、度數距離、opcontrol 掣表、Selector／Console）已過期。
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | 目前主線（128KB LVGL softfp、SD CSV、動畫、場控 teardown、cos `getRealPose`） |
-| `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 32KB 穩定快照（出事可回退 `.a` + `lv_conf.h`） |
-| `lvgl-128k-heap` | 早期 128→256KB 實驗分支（歷史參考） |
+| `main` | **現時主線**：Type R Dash、headless auton、`dash_config`、malloc LVGL、cos `getRealPose` |
+| `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
+| `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
+| `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
 
 ---
 
 ## Changelog
+
+### 2026-10-28 — Type R Dash 成為 `main`
+
+- **Brain UI**：開機 `telem_dash`（Type R）— 校正前中心 gauge 0→100～2s；校正後左移電量弧 + pose／DIST／DRV／MCH／RAM。
+- **Headless auton**：`auton_select` 取代 `rd::Selector`；controller ←→ 換名，Dash header 顯示。
+- **Dash ↔ PID**：`ui_pages` 只 `focus`，唔刪頁（慳 malloc 碎裂）；場控仍 teardown。
+- **唔再有** robodash Console／Selector LVGL 頁；溫度改讀 `include/customs/dash_config.hpp`。
+- **顏色**：batt &lt;40 黃／40–80 紅／&gt;80 綠；DIST inch≈999 灰、conf&gt;50 綠、&lt;20 黃、其餘紅。
+- **練習掣**：←→ **只**換 auton（唔 `set_pose`）；DOWN = `reset_pid`（清 traveled）+ 回 Dash；DOWN+B 跑 auton。
+- **Chrome**：隱藏 robodash 右上 views 掣；batt 用 montserrat_48。
+- **LVGL**：`LV_MEM_CUSTOM` + `malloc`；Dash 顯示真實 free RAM（`mallinfo` + sbrk）。
 
 ### 2026-10-26 — LVGL heap 128KB（softfp rebuild）
 
@@ -73,14 +85,18 @@
 | --- | --- |
 | `src/main.cpp` | 底盤馬達／IMU／tracking／`chassis`／`ezPID`／`pidTuner` 定義 |
 | `include/customs/objDeclare.hpp` | `extern` + **inline** 感測器／intake／氣動 |
+| `include/customs/dash_config.hpp` | **改呢度** DRV／MCH 溫度對應邊粒馬達 |
+| `include/customs/telem_dash.hpp` + `src/customs/telem_dash.cpp` | Type R Dash（boot sweep → live） |
+| `include/customs/auton_select.hpp` + `src/customs/auton_select.cpp` | Headless auton 列表（無 LVGL Selector） |
+| `include/customs/ui_pages.hpp` + `src/customs/ui_pages.cpp` | Dash／PID 互斥 focus |
 | `include/relocate.hpp` + `src/relocate.cpp` | `wallReset`、`getRealPose`、distance 濾波、`auto_init_universal` |
 | `include/ez_compat.hpp` + `src/ez_compat.cpp` | `EzDrive` |
 | `include/pid_tuner.hpp` + `src/pid_tuner.cpp` | Brain + controller PID 調校器 |
 | `include/customs/sd_log.hpp` + `src/customs/sd_log.cpp` | SD CSV append |
-| `src/customs/monitor.cpp` | controller 三行文字、動畫、Console 遙測 |
+| `src/customs/monitor.cpp` | controller 三行、動畫、隱藏 views chrome、刷新 Dash |
 | `src/customs/controls.cpp` | `pneumaticsBtn()` |
-| `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫幀（flash，不佔 LVGL heap） |
-| `firmware/liblvgl.a` | 預編譯 LVGL（含實際 `LV_MEM_SIZE` pool） |
+| `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫幀（flash） |
+| `firmware/liblvgl.a` | 預編譯 LVGL（softfp；而家 `LV_MEM_CUSTOM` 唔靠靜態 pool） |
 
 ### 慣例：`extern` vs `inline`
 
@@ -95,7 +111,7 @@
 extern lemlib::Chassis chassis;
 extern ez_compat::EzDrive ezPID;
 extern ez_compat::PidTuner pidTuner;
-extern rd::Selector selector;
+// Auton 用 auton_select（headless）— 無 rd::Selector
 extern pros::Controller controller;
 extern pros::MotorGroup leftMotors;
 extern pros::MotorGroup rightMotors;
@@ -118,6 +134,11 @@ inline pros::adi::Pneumatics cover('D', false);
 inline pros::adi::Pneumatics hook('B', false);
 inline pros::adi::Pneumatics matchload('C', false);
 ```
+
+**新馬達上 Dash 溫度**
+
+1. 喺 `objDeclare.hpp`（或 `main.cpp` MotorGroup）宣告。  
+2. 改 `include/customs/dash_config.hpp` 嘅 `format_drive_temps`／`format_mech_temps`（index = MotorGroup 入面次序，唔係 smart-port）。
 
 ```cpp
 // src/main.cpp（定義底盤側）
@@ -319,7 +340,7 @@ chassis.setPose(
 
 正式／練習場圍欄常有 **±1" 以上砌裝誤差**。若用「絕對距離 → 絕對 (x,y)」，等於把**場地公差**寫進 odometry。`getRealPose` 只問：「相對我練車時量好的 golden，差咗幾吋？」——**唔使量測 distance sensor 相對 tracking center 的 CAD offset**，也較唔會被場地歪度拖死。
 
-量 `golden` 的做法：物理對位／治具把車放到 auton 中該 reset 的姿態 → 讀 Console 上該 sensor 吋數 → 寫進程式。換場地若圍欄差很多，可重量 golden，而唔使改整套 offset 幾何。
+量 `golden` 的做法：物理對位／治具把車放到 auton 中該 reset 的姿態 → 讀 **Dash DIST** 該格吋數 → 寫進程式。換場地若圍欄差很多，可重量 golden，而唔使改整套 offset 幾何。
 
 `auto_init_universal`（多感測器絕對開局）仍在 `relocate.cpp`，但實戰**不建議**當開局主力——offset 難準、場地公差致命；開局優先物理頂牆 + `setPose(0,0,0)`（舊站第六章）。
 
@@ -353,7 +374,7 @@ chassis.setPose(
 
 Brain **PID** 頁（compact UI）：換 field、± 調值、+12/−12、h±90、Print、Ctrl、Pose0、L10/R10（十圈）。
 
-Print 會把常數片段打到 terminal／Console，並寫一行 SD snapshot（有卡時）。貼回 `initialize()` 範例：
+Print 會把常數片段打到 terminal，並寫一行 SD snapshot（有卡時）。貼回 `initialize()` 範例：
 
 ```cpp
 ezPID.set_drive_constants(...);
@@ -431,24 +452,38 @@ L2/R2 十圈測試。欄位：
 
 ---
 
+## Type R Dash（`telem_dash`）
+
+開機流程：
+
+1. `telem_dash::start()` — 只顯示**置中** ignition arc（CAL／LOAD），品牌隱藏。  
+2. IMU 校正完 → blocking 0→100 掃完 → `finish_boot()`：arc 移左做 **BATT %**，揭開 pose／DIST／DRV／MCH／RAM／auton 名。  
+3. `ui_pages::show_dash()`／`show_pid()` 互斥 focus；**唔會**銷毀對方頁。
+
+溫度來源集中喺 `include/customs/dash_config.hpp`（改 DRV／MCH 唔使改 `telem_dash.cpp`）。
+
+**唔再用** `rd::Console::printf`（內部小 buffer 易 stack smash）。舊 Console 遙測已由 Dash 取代。
+
+---
+
 ## 動畫（Brain）
 
 - **一個** robodash view `Anim` + **一個** `lv_img`，timer 換 `robot01`…`robot10` src。
-- Controller **UP**（非場控、非 tuner）→ `autoChange = true` 開始播。
-- LEFT/RIGHT 選 auton、DOWN 開 console 等會把 `autoChange = false`。
-- **不要**為每幀建一個 `rd::Image` 再 `.focus()`——那會爆 LVGL heap。
+- Controller 相關邏輯會把 `autoChange = false`（例如換 auton、DOWN 回 Dash）。
+- **不要**為每幀建一個 `rd::Image` 再 `.focus()`——會爆 heap／碎片。
 
 ---
 
 ## Controller monitor（`monitor.cpp`）
 
-`initialize()` 開兩條 task：`uiTask_fn`（controller 三行 + 動畫）、`telemetry_fn`（Brain Console）。
+`initialize()` 開 `uiTask_fn`（controller 三行 + 動畫 + 隱藏 views chrome）同 telemetry 路徑刷新 **Dash**（唔再刷 Console）。
 
-### 設計要點（相對舊站「telemetry 狂刷」）
+### 設計要點
 
-- Controller **只在字變了才 `print` 一行**（`dirty[]` + round-robin），唔定時 `clear()`——減 V5 controller 丟字／卡死。
-- 場控接上：停 Console `clear+printf`、刪 Anim／PID page，慳 LVGL heap。
+- Controller **只在字變了才 `print` 一行**（`dirty[]` + round-robin），唔定時 `clear()`。
+- 場控接上：teardown Anim／Dash／PID，慳 LVGL；拔出後重建。
 - `displayMenu` 用右搖桿左右切頁（練習場、非 tuner）。
+- 右上 robodash views 掣會被 **隱藏**（Dash／PID 用 `ui_pages` 切）。
 
 ### Controller 三行內容
 
@@ -460,48 +495,43 @@ L2/R2 十圈測試。欄位：
 | **displayMenu=1** | `D:` `ezPID.get_traveled()`（For PID Distance） | `T:` theta | （空） |
 | **displayMenu=2** | `X:` | `Y:` | `T:` |
 
-舊站「用手推車睇 For PID Distance」＝練習場切到 **menu 1**。
-
-### Console（僅練習場）
-
-循環印：pose、六驅＋intake 溫度、`Dist` traveled、`LVGL %used`、四向 distance（KF 吋 + confidence）。場控時整段 skip。
+舊站「用手推車睇 For PID Distance」＝練習場切到 **menu 1**。Brain 上同時間睇 **Dash** DIST／pose／溫。
 
 ### 場控／比賽模式
 
 `pros::competition::is_connected()` 為真時：
 
 1. `pidTuner.force_off()` / 禁止 X+A 開 tuner  
-2. 停動畫；`destroy_robot_anim()` + `pidTuner.release_ui()`（刪 view，還 LVGL）  
-3. 停 Console 溫度／distance／`clear+printf` 迴圈  
-4. Controller 精簡三行（上表）  
-5. 拔出場控後自動 `pidTuner.start()` 重建 PID 頁  
+2. 停動畫；釋放 Anim／Dash／PID UI  
+3. Controller 精簡三行（上表）  
+4. 拔出場控後重建 PID／Dash  
 
 ### 練習場快捷鍵（tuner 關）
 
 | 操作 | 作用 |
 | --- | --- |
 | 右搖桿左右 | `displayMenu` 0／1／2 |
-| LEFT / RIGHT | 換 auton + `set_pose(0,0,0)` |
+| LEFT / RIGHT | 換 auton（**唔** `set_pose`） |
 | UP（短按 new） | cancel + `reset_pid` + rumble |
-| UP（按住） | 開動畫（`autoChange`） |
-| DOWN | focus Console |
-| DOWN+B | 跑 `autonomous()` |
+| DOWN | `reset_pid`（清 traveled）+ 回 Dash |
+| DOWN+B | focus Dash + 跑 `autonomous()` |
 | DOWN+Y | `moveToPose(0,0,0,…)` |
+| X+A | 開 PID tuner（見上表） |
 
-氣動掣見上方 **氣動** 表；tuner 開時 X／A／B／Y／肩鍵改歸 PID 調校。
+氣動掣見上方 **氣動** 表；tuner 開時 X／A／B／Y／肩鍵改歸 PID 調校。Tuner 內 LEFT／RIGHT 仍會 `set_pose(0,0,0)`（換 field）。
 
 ---
 
-## LVGL heap
+## LVGL 記憶體
 
 | 項目 | 說明 |
 | --- | --- |
-| 設定 | `include/liblvgl/lv_conf.h` → `LV_MEM_SIZE` |
-| 實池 | 必須編進 `firmware/liblvgl.a`（改 header 不夠） |
-| 目前 `main` | **128KB**，`-mfloat-abi=softfp`（與本專案 `common.mk` 一致） |
-| 回退 | `git checkout pre-lvgl-heap-bump -- firmware/liblvgl.a include/liblvgl/lv_conf.h` |
+| 設定 | `include/liblvgl/lv_conf.h` → **`LV_MEM_CUSTOM 1`**（`malloc`／`free`／`realloc`） |
+| 舊靜態 pool | `LV_MEM_CUSTOM 0` + `LV_MEM_SIZE` 編進 `firmware/liblvgl.a` 先有效 |
+| ABI | `liblvgl.a` 須 `-mfloat-abi=softfp`（對齊 `common.mk`） |
+| Dash RAM 字 | `mallinfo().fordblks` +（`HeapLimit − sbrk`）≈ 系統剩餘 |
 
-上 Brain 後應確認 heap `total` 約 **128KB**。紅 mon 多為 LVGL object 過多／碎裂；加大 heap 降低機會，但仍應避免一次建立大量全屏 Image view。
+紅 mon／abort 多為 LVGL object 過多、錯 thread 刪 widget、或碎裂。Dash／PID 用 focus 互斥；場控先 teardown。唔好用 `rd::Console::printf`。
 
 ---
 
@@ -514,12 +544,14 @@ L2/R2 十圈測試。欄位：
 | `wallReset` 撞牆硬重置 | ✓ |
 | `getRealPose` 相對距離校正（無 CAD offset） | ✓ |
 | 馬達／氣動／distance `objDeclare` | ✓ |
+| Type R Dash + `dash_config` 溫度 map | ✓ |
+| Headless `auton_select`（無 Selector 頁） | ✓ |
 | Controller monitor 分頁 + 場控精簡 | ✓ |
 | PID Brain + controller 調校 | ✓ |
 | SD `pid_tune_log.csv` / `findingOffset.csv` | ✓ |
-| ±12in IMU／odom 顯示與記錄 | ✓ |
 | robot01–10 單 view 動畫 | ✓ |
 | 場控 teardown UI | ✓ |
-| LVGL 128KB heap（softfp） | ✓（`main`） |
+| LVGL `LV_MEM_CUSTOM`／malloc（softfp `.a`） | ✓（`main`） |
+| robodash Selector／Console 頁 | ✗（已移除，慳 heap） |
 | SD 卡直接播 PNG/JPG | ✗（須 converter） |
 | RW 式絕對場地 distance reset / MCL | 未內建（可對照 [RW-Template](https://github.com/richardbwang/RW-Template)） |
