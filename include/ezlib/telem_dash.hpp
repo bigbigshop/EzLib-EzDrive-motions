@@ -11,6 +11,8 @@ void focus();
 bool ready();
 bool live();           // true once data panels are up
 void refresh();
+// PID overlay 蓋住時隱藏電量錶／指針（避免 transform 畫穿）
+void set_gauge_hidden(bool hidden);
 // Short ASCII reason for last start() failure ("" if ok / never tried).
 const char* last_error();
 

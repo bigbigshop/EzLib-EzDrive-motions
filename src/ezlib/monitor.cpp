@@ -30,6 +30,7 @@ const lv_img_dsc_t* const k_frames[k_frame_count] = {
     &robot06, &robot07, &robot08, &robot09, &robot10,
 };
 
+
 lv_obj_t* anim_page = nullptr;
 lv_obj_t* anim_img = nullptr;
 int anim_frame = 0;
@@ -195,9 +196,9 @@ void telemetry_fn() {
     }
     if (telem_dash::ready()) {
         ui_pages::show_dash();
-        controller.print(2, 0, "%-15.15s", "dash OK");
         boot_log::log("telemetry:dash live");
     } else {
+        // 僅於失敗時在手掣顯示原因；成功則交由 uiTask 顯示正常三行
         controller.print(2, 0, "%-15.15s", telem_dash::last_error());
         boot_log::log("telemetry:dash FAILED %s", telem_dash::last_error());
     }

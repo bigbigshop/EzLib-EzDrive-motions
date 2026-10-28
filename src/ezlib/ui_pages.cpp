@@ -9,10 +9,10 @@ namespace ui_pages {
 
 void show_dash() {
     boot_log::log("ui_pages:show_dash");
-    // Hide standalone PID overlay if present; keep page allocated.
-    pidTuner.hide();
+    pidTuner.hide(); // 內含 set_gauge_hidden(false)
     telem_dash::start();
     if (telem_dash::ready()) {
+        telem_dash::set_gauge_hidden(false);
         telem_dash::focus();
     } else {
         boot_log::log("ui_pages:show_dash FAIL");
@@ -21,13 +21,12 @@ void show_dash() {
 
 void show_pid() {
     boot_log::log("ui_pages:show_pid");
-    // Keep Dash alive underneath — uncover PID overlay.
     pidTuner.start();
     if (!pidTuner.alive()) {
         boot_log::log("ui_pages:show_pid FAIL");
         return;
     }
-    pidTuner.focus();
+    pidTuner.focus(); // 內含 set_gauge_hidden(true)
 }
 
 } // namespace ui_pages

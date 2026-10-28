@@ -9,6 +9,7 @@
 #include "liblvgl/lvgl.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <cstdint>
@@ -37,15 +38,43 @@ inline lv_color_t col_neon_g() { return lv_color_hex(0x22FF66); }
 inline lv_color_t col_neon_r() { return lv_color_hex(0xFF2040); }
 inline lv_color_t col_neon_y() { return lv_color_hex(0xFFD400); }
 inline lv_color_t col_gray() { return lv_color_hex(0x6A6E76); }
+// 2017 Civic Type R 儀表黃針
+inline lv_color_t col_type_r_needle() { return lv_color_hex(0xFFD400); }
 
 lv_obj_t* parent_ = nullptr;
 
 lv_obj_t* tach_ = nullptr;
+lv_obj_t* face_ = nullptr;
+lv_obj_t* needle_ = nullptr;
+lv_obj_t* needle_hub_ = nullptr;
+lv_obj_t* tick_lo_ = nullptr; // 啟動：刻度 0 / 6 / 12
+lv_obj_t* tick_mid_ = nullptr;
+lv_obj_t* tick_hi_ = nullptr;
 lv_obj_t* tach_val_ = nullptr;
 lv_obj_t* tach_unit_ = nullptr;
-lv_obj_t* boot_tag_ = nullptr;
+lv_obj_t* boot_tag_ = nullptr; // 主 Dash = BATT；啟動時隱藏
 lv_obj_t* brand_ytt_ = nullptr;
 lv_obj_t* brand_type_ = nullptr;
+
+// 啟動 cluster（對齊 honda_civic_type_r_digital_dashboard_480x242.html）
+lv_obj_t* splash_ = nullptr;
+lv_obj_t* splash_title_ = nullptr;
+lv_obj_t* splash_sub_ = nullptr;
+lv_obj_t* boot_gear_ = nullptr;
+lv_obj_t* boot_mode_ = nullptr;
+lv_obj_t* boot_boost_ = nullptr;
+lv_obj_t* boot_status_ = nullptr;
+lv_obj_t* boot_turbo_ = nullptr;
+lv_obj_t* boot_rpm_lbl_ = nullptr;
+lv_obj_t* boot_leds_[7] = {};
+char cache_boost_[24] = {};
+
+// Arc：rotation 135°、掃過 270°（0°=三點鐘，順時針）。LVGL transform_angle 單位為 0.1°。
+constexpr int k_arc_rot_deg = 135;
+constexpr int k_arc_sweep_deg = 270;
+constexpr lv_coord_t k_needle_thick = 3;
+constexpr lv_coord_t k_arc_width_boot = 18;
+constexpr lv_coord_t k_arc_width_live = 14;
 
 lv_obj_t* hdr_auton_ = nullptr;
 lv_obj_t* hdr_ram_ = nullptr;
@@ -79,6 +108,8 @@ char cache_tach_[16] = {};
 
 bool live_ready_ = false;
 bool session_booted_ = false; // skip center boot after first calibrate this power-on
+bool gauge_hidden_ = false;   // PID overlay 蓋住時 true
+lv_coord_t gauge_sz_ = 168;
 char last_error_[48] = {};
 
 void set_err(const char* msg) {
@@ -154,67 +185,226 @@ lv_color_t batt_color(int pct) {
     return col_neon_r();
 }
 
+void set_hidden(lv_obj_t* o, bool hide) {
+    if (o == nullptr) return;
+    if (hide) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(o, LV_OBJ_FLAG_HIDDEN);
+}
+
+void place_tick(lv_obj_t* lab, lv_coord_t cx, lv_coord_t cy, lv_coord_t r, int pct) {
+    if (lab == nullptr) return;
+    const float deg =
+        static_cast<float>(k_arc_rot_deg) +
+        static_cast<float>(pct) * static_cast<float>(k_arc_sweep_deg) / 100.f;
+    const float rad = deg * 3.14159265f / 180.f;
+    const lv_coord_t x = cx + static_cast<lv_coord_t>(std::cos(rad) * static_cast<float>(r)) - 8;
+    const lv_coord_t y = cy + static_cast<lv_coord_t>(std::sin(rad) * static_cast<float>(r)) - 6;
+    lv_obj_set_pos(lab, x, y);
+    lv_obj_move_foreground(lab);
+}
+
+void layout_needle(lv_coord_t arc_sz, lv_coord_t arc_w, bool long_needle) {
+    if (tach_ == nullptr || needle_ == nullptr) return;
+    const lv_coord_t ax = lv_obj_get_x(tach_);
+    const lv_coord_t ay = lv_obj_get_y(tach_);
+    const lv_coord_t cx = ax + arc_sz / 2;
+    const lv_coord_t cy = ay + arc_sz / 2;
+
+    lv_coord_t len = long_needle ? (arc_sz / 2 - arc_w - 4) : (arc_sz / 2 - 28);
+    if (len < 40) len = 40;
+    lv_obj_set_size(needle_, len, k_needle_thick);
+    lv_obj_set_style_transform_pivot_x(needle_, 0, 0);
+    lv_obj_set_style_transform_pivot_y(needle_, k_needle_thick / 2, 0);
+    lv_obj_set_pos(needle_, cx, cy - k_needle_thick / 2);
+
+    if (needle_hub_ != nullptr) {
+        const lv_coord_t hub = long_needle ? 14 : 12;
+        lv_obj_set_size(needle_hub_, hub, hub);
+        lv_obj_set_pos(needle_hub_, cx - hub / 2, cy - hub / 2);
+        lv_obj_move_foreground(needle_hub_);
+    }
+}
+
+void set_needle_pct(int pct) {
+    if (needle_ == nullptr) return;
+    if (pct < 0) pct = 0;
+    if (pct > 100) pct = 100;
+    const int angle_deci =
+        (k_arc_rot_deg * 10) + (pct * k_arc_sweep_deg * 10) / 100;
+    lv_obj_set_style_transform_angle(needle_, static_cast<lv_coord_t>(angle_deci), 0);
+}
+
 void set_tach_pct(int pct, const char* center_text) {
     if (pct < 0) pct = 0;
     if (pct > 100) pct = 100;
-    const lv_color_t c = live_ready_ ? batt_color(pct) : col_accent_hi();
+    const bool boot = !live_ready_;
+    const lv_color_t arc_c = boot ? col_accent_hi() : batt_color(pct);
     if (tach_ != nullptr) {
         lv_arc_set_value(tach_, pct);
-        lv_obj_set_style_arc_color(tach_, c, LV_PART_INDICATOR);
+        lv_obj_set_style_arc_color(tach_, arc_c, LV_PART_INDICATOR);
+    }
+    set_needle_pct(pct);
+    if (boot) {
+        if (needle_ != nullptr) lv_obj_set_style_bg_color(needle_, col_type_r_needle(), 0);
+        if (needle_hub_ != nullptr) {
+            lv_obj_set_style_bg_color(needle_hub_, col_type_r_needle(), 0);
+            lv_obj_set_style_border_color(needle_hub_, col_text(), 0);
+        }
+        if (tach_val_ != nullptr) style_text(tach_val_, col_text());
+    } else {
+        if (needle_ != nullptr) lv_obj_set_style_bg_color(needle_, col_text(), 0);
+        if (needle_hub_ != nullptr) {
+            lv_obj_set_style_bg_color(needle_hub_, arc_c, 0);
+            lv_obj_set_style_border_color(needle_hub_, col_text(), 0);
+        }
+        if (tach_val_ != nullptr) style_text(tach_val_, arc_c);
+        if (tach_unit_ != nullptr) style_text(tach_unit_, arc_c);
     }
     set_cached(tach_val_, cache_tach_, sizeof(cache_tach_), center_text);
-    if (tach_val_ != nullptr) style_text(tach_val_, c);
-    if (tach_unit_ != nullptr && live_ready_) style_text(tach_unit_, c);
 }
 
+// 主 Dash：數字在弧心（啟動動畫專用 below 唔用喺呢度）
 void center_tach_readout() {
-    // Keep % number dead-center in the arc ring.
     if (tach_ == nullptr) return;
-    if (tach_val_ != nullptr) lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, -4);
-    if (tach_unit_ != nullptr) lv_obj_align_to(tach_unit_, tach_, LV_ALIGN_CENTER, 0, 18);
-    if (boot_tag_ != nullptr) lv_obj_align_to(boot_tag_, tach_, LV_ALIGN_CENTER, 0, 36);
+    if (tach_val_ != nullptr) {
+        lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, -4);
+        lv_obj_move_foreground(tach_val_);
+    }
+    if (tach_unit_ != nullptr) {
+        lv_obj_align_to(tach_unit_, tach_, LV_ALIGN_CENTER, 0, 18);
+        lv_obj_move_foreground(tach_unit_);
+    }
+    if (boot_tag_ != nullptr) {
+        lv_obj_align_to(boot_tag_, tach_, LV_ALIGN_CENTER, 0, 36);
+        lv_obj_move_foreground(boot_tag_);
+    }
 }
 
+void apply_arc_width(lv_coord_t w) {
+    if (tach_ == nullptr) return;
+    lv_obj_set_style_arc_width(tach_, w, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(tach_, w, LV_PART_INDICATOR);
+}
+
+void set_boot_cluster_visible(bool on) {
+    set_hidden(face_, !on);
+    set_hidden(tick_lo_, !on);
+    set_hidden(tick_mid_, !on);
+    set_hidden(tick_hi_, !on);
+    set_hidden(boot_gear_, !on);
+    set_hidden(boot_mode_, !on);
+    set_hidden(boot_boost_, !on);
+    set_hidden(boot_status_, !on);
+    set_hidden(boot_turbo_, !on);
+    set_hidden(boot_rpm_lbl_, !on);
+    for (lv_obj_t* led : boot_leds_) set_hidden(led, !on);
+    if (on && needle_ != nullptr) lv_obj_set_style_bg_color(needle_, col_type_r_needle(), 0);
+}
+
+void set_splash_visible(bool on) {
+    set_hidden(splash_, !on);
+    set_hidden(splash_title_, !on);
+    set_hidden(splash_sub_, !on);
+    if (on && splash_ != nullptr) lv_obj_move_foreground(splash_);
+    if (on && splash_title_ != nullptr) lv_obj_move_foreground(splash_title_);
+    if (on && splash_sub_ != nullptr) lv_obj_move_foreground(splash_sub_);
+}
+
+void update_boot_leds(float factor) {
+    // HTML thresholds ≈ 3500…7800 / 8000 → 0.44…0.975
+    constexpr float th[7] = {0.44f, 0.56f, 0.69f, 0.79f, 0.88f, 0.94f, 0.98f};
+    for (int i = 0; i < 7; ++i) {
+        lv_obj_t* led = boot_leds_[i];
+        if (led == nullptr) continue;
+        const bool on = factor >= th[i];
+        lv_color_t c = col_dim();
+        if (on) {
+            if (i < 3) c = col_neon_g();
+            else if (i < 5) c = col_neon_y();
+            else c = col_neon_r();
+        }
+        lv_obj_set_style_bg_color(led, c, 0);
+    }
+}
+
+// 啟動：大錶 + 中央車速（在指針下方）+ 上下狀態列
 void place_tach_center() {
-    // Brain content ~480×240; center a large arc.
-    constexpr lv_coord_t sz = 200;
-    constexpr lv_coord_t x = (480 - sz) / 2; // 140
-    constexpr lv_coord_t y = 18;
+    constexpr lv_coord_t sz = 160;
+    constexpr lv_coord_t x = (480 - sz) / 2;
+    constexpr lv_coord_t y = 28;
+    gauge_sz_ = sz;
+    set_splash_visible(false);
+    set_boot_cluster_visible(true);
+    apply_arc_width(k_arc_width_boot);
+    set_hidden(brand_ytt_, true);
+    set_hidden(brand_type_, true);
+    set_hidden(boot_tag_, true);
+
     if (tach_ != nullptr) {
         lv_obj_set_size(tach_, sz, sz);
         lv_obj_set_pos(tach_, x, y);
     }
-    if (tach_unit_ != nullptr) lv_label_set_text(tach_unit_, "LOAD");
-    if (boot_tag_ != nullptr) {
-        lv_label_set_text(boot_tag_, "CAL");
-        style_text(boot_tag_, col_accent_hi());
+    const lv_coord_t cx = x + sz / 2;
+    const lv_coord_t cy = y + sz / 2;
+    if (face_ != nullptr) {
+        const lv_coord_t face_sz = sz - 2 * k_arc_width_boot - 8;
+        lv_obj_set_size(face_, face_sz, face_sz);
+        lv_obj_set_pos(face_, cx - face_sz / 2, cy - face_sz / 2);
     }
-    center_tach_readout();
-    // No brand text during boot / calibrate.
-    if (brand_ytt_ != nullptr) lv_obj_add_flag(brand_ytt_, LV_OBJ_FLAG_HIDDEN);
-    if (brand_type_ != nullptr) lv_obj_add_flag(brand_type_, LV_OBJ_FLAG_HIDDEN);
+    layout_needle(sz, k_arc_width_boot, true);
+    // 刻度 0／6／12（只改顯示數字；針／弧 sweep 比例不變）
+    if (tick_lo_ != nullptr) lv_label_set_text(tick_lo_, "0");
+    if (tick_mid_ != nullptr) lv_label_set_text(tick_mid_, "6");
+    if (tick_hi_ != nullptr) lv_label_set_text(tick_hi_, "12");
+    place_tick(tick_lo_, cx, cy, sz / 2 - k_arc_width_boot / 2 - 2, 0);
+    place_tick(tick_mid_, cx, cy, sz / 2 - k_arc_width_boot / 2 - 2, 50);
+    place_tick(tick_hi_, cx, cy, sz / 2 - k_arc_width_boot / 2 - 2, 100);
+
+    // 車速在弧心偏下（指針下方），同 HTML
+    if (tach_val_ != nullptr) {
+        lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, 8);
+        style_text(tach_val_, col_text());
+        lv_obj_move_foreground(tach_val_);
+    }
+    if (tach_unit_ != nullptr) {
+        lv_label_set_text(tach_unit_, "KM/H");
+        style_text(tach_unit_, col_accent_hi());
+        lv_obj_align_to(tach_unit_, tach_val_, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
+        lv_obj_move_foreground(tach_unit_);
+    }
 }
 
 void place_tach_left_batt() {
+    // 主 Dash：關閉啟動 cluster／splash
     constexpr lv_coord_t sz = 152;
     constexpr lv_coord_t x = 6;
     constexpr lv_coord_t y = 26;
+    gauge_sz_ = sz;
+    set_splash_visible(false);
+    set_boot_cluster_visible(false);
+    apply_arc_width(k_arc_width_live);
+    set_hidden(boot_tag_, false);
+
     if (tach_ != nullptr) {
         lv_obj_set_size(tach_, sz, sz);
         lv_obj_set_pos(tach_, x, y);
     }
-    if (tach_unit_ != nullptr) lv_label_set_text(tach_unit_, "%");
+    layout_needle(sz, k_arc_width_live, false);
+    if (tach_unit_ != nullptr) {
+        lv_label_set_text(tach_unit_, "%");
+        style_text(tach_unit_, col_muted());
+    }
     if (boot_tag_ != nullptr) {
         lv_label_set_text(boot_tag_, "BATT");
         style_text(boot_tag_, col_muted());
     }
     center_tach_readout();
     if (brand_ytt_ != nullptr) {
-        lv_obj_clear_flag(brand_ytt_, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(brand_ytt_, false);
         lv_obj_set_pos(brand_ytt_, 8, 4);
     }
     if (brand_type_ != nullptr) {
-        lv_obj_clear_flag(brand_type_, LV_OBJ_FLAG_HIDDEN);
+        set_hidden(brand_type_, false);
         lv_obj_set_pos(brand_type_, 42, 6);
     }
 }
@@ -227,41 +417,226 @@ void style_tach_arc(lv_obj_t* arc) {
     lv_arc_set_value(arc, 0);
     lv_obj_remove_style(arc, nullptr, LV_PART_KNOB);
     lv_obj_clear_flag(arc, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_style_arc_width(arc, 14, LV_PART_MAIN);
-    lv_obj_set_style_arc_width(arc, 14, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_width(arc, k_arc_width_live, LV_PART_MAIN);
+    lv_obj_set_style_arc_width(arc, k_arc_width_live, LV_PART_INDICATOR);
     lv_obj_set_style_arc_color(arc, col_arc_bg(), LV_PART_MAIN);
     lv_obj_set_style_arc_color(arc, col_accent_hi(), LV_PART_INDICATOR);
-    lv_obj_set_style_arc_rounded(arc, false, LV_PART_MAIN);
-    lv_obj_set_style_arc_rounded(arc, false, LV_PART_INDICATOR);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_MAIN);
+    lv_obj_set_style_arc_rounded(arc, true, LV_PART_INDICATOR);
+}
+
+lv_obj_t* make_led(lv_obj_t* parent, lv_coord_t x, lv_coord_t y) {
+    lv_obj_t* led = lv_obj_create(parent);
+    if (led == nullptr) return nullptr;
+    lv_obj_set_pos(led, x, y);
+    lv_obj_set_size(led, 10, 10);
+    lv_obj_clear_flag(led, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_bg_color(led, col_dim(), 0);
+    lv_obj_set_style_bg_opa(led, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(led, 1, 0);
+    lv_obj_set_style_border_color(led, col_edge(), 0);
+    lv_obj_set_style_pad_all(led, 0, 0);
+    lv_obj_add_flag(led, LV_OBJ_FLAG_HIDDEN);
+    return led;
+}
+
+void create_boot_cluster(lv_obj_t* parent) {
+    // Splash（自動播，唔使撳掣）
+    splash_ = lv_obj_create(parent);
+    if (splash_ != nullptr) {
+        lv_obj_set_pos(splash_, 0, 0);
+        lv_obj_set_size(splash_, 480, 240);
+        lv_obj_clear_flag(splash_, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(splash_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(splash_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(splash_, 0, 0);
+        lv_obj_set_style_radius(splash_, 0, 0);
+        lv_obj_set_style_pad_all(splash_, 0, 0);
+        lv_obj_add_flag(splash_, LV_OBJ_FLAG_HIDDEN);
+    }
+    splash_title_ = make_label(parent, "EzLib", 175, 95, col_text(), &lv_font_montserrat_16);
+    splash_sub_ = make_label(parent, "SYSTEM CHECK", 185, 120, col_accent_hi(), &lv_font_montserrat_12);
+    set_hidden(splash_title_, true);
+    set_hidden(splash_sub_, true);
+
+    // 頂列：N / SPORT / LEDs / boost
+    boot_gear_ = make_label(parent, "N", 8, 4, col_text(), &lv_font_montserrat_14);
+    boot_mode_ = make_label(parent, "SPORT", 28, 6, col_muted(), &lv_font_montserrat_12);
+    constexpr lv_coord_t led0 = 175;
+    for (int i = 0; i < 7; ++i) boot_leds_[i] = make_led(parent, led0 + i * 14, 6);
+    boot_boost_ = make_label(parent, "0.0 BAR", 390, 6, col_accent_hi(), &lv_font_montserrat_12);
+
+    // 底列
+    boot_turbo_ = make_label(parent, "YKK TURBO", 8, 222, col_muted(), &lv_font_montserrat_12);
+    boot_status_ = make_label(parent, "YTT IGNITION", 168, 222, col_accent_hi(), &lv_font_montserrat_12);
+    boot_rpm_lbl_ = make_label(parent, "12000 RPM", 390, 222, col_muted(), &lv_font_montserrat_12);
+
+    set_hidden(boot_gear_, true);
+    set_hidden(boot_mode_, true);
+    set_hidden(boot_boost_, true);
+    set_hidden(boot_turbo_, true);
+    set_hidden(boot_status_, true);
+    set_hidden(boot_rpm_lbl_, true);
 }
 
 void create_tach(lv_obj_t* parent) {
+    create_boot_cluster(parent);
+
     tach_ = lv_arc_create(parent);
     style_tach_arc(tach_);
+
+    face_ = lv_obj_create(parent);
+    if (face_ != nullptr) {
+        lv_obj_clear_flag(face_, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(face_, lv_color_hex(0x08090D), 0);
+        lv_obj_set_style_bg_opa(face_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(face_, 1, 0);
+        lv_obj_set_style_border_color(face_, col_edge(), 0);
+        lv_obj_set_style_radius(face_, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(face_, 0, 0);
+        lv_obj_add_flag(face_, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    tick_lo_ = make_label(parent, "0", 0, 0, col_muted(), &lv_font_montserrat_12);
+    tick_mid_ = make_label(parent, "6", 0, 0, col_muted(), &lv_font_montserrat_12);
+    tick_hi_ = make_label(parent, "12", 0, 0, col_accent_hi(), &lv_font_montserrat_12);
+    set_hidden(tick_lo_, true);
+    set_hidden(tick_mid_, true);
+    set_hidden(tick_hi_, true);
+
+    needle_ = lv_obj_create(parent);
+    if (needle_ != nullptr) {
+        lv_obj_clear_flag(needle_, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(needle_, col_type_r_needle(), 0);
+        lv_obj_set_style_bg_opa(needle_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(needle_, 0, 0);
+        lv_obj_set_style_radius(needle_, 1, 0);
+        lv_obj_set_style_pad_all(needle_, 0, 0);
+    }
+    needle_hub_ = lv_obj_create(parent);
+    if (needle_hub_ != nullptr) {
+        lv_obj_clear_flag(needle_hub_, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(needle_hub_, col_type_r_needle(), 0);
+        lv_obj_set_style_bg_opa(needle_hub_, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(needle_hub_, 2, 0);
+        lv_obj_set_style_border_color(needle_hub_, col_text(), 0);
+        lv_obj_set_style_radius(needle_hub_, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(needle_hub_, 0, 0);
+    }
+
     tach_val_ = make_label(parent, "0", 0, 0, col_text(), &lv_font_montserrat_48);
-    tach_unit_ = make_label(parent, "LOAD", 0, 0, col_muted(), &lv_font_montserrat_12);
-    boot_tag_ = make_label(parent, "CAL", 0, 0, col_accent_hi(), &lv_font_montserrat_12);
+    tach_unit_ = make_label(parent, "%", 0, 0, col_muted(), &lv_font_montserrat_12);
+    boot_tag_ = make_label(parent, "BATT", 0, 0, col_muted(), &lv_font_montserrat_12);
+    set_needle_pct(0);
 }
 
-// Blocking 0→100% on the caller thread (~2s). Runs after calibrate in finish_boot
-// so a fast IMU calibrate cannot skip the animation.
+void poke_ui() {
+    if (parent_ != nullptr) lv_obj_invalidate(parent_);
+    lv_timer_handler();
+}
+
+// 自動啟動：splash → 高幀率 sin 掃針（唔使掣）
 void run_boot_sweep_blocking() {
-    boot_log::log("telem_dash:sweep 0→100 (~2s)");
-    if (boot_tag_ != nullptr) {
-        lv_label_set_text(boot_tag_, "IGN");
-        style_text(boot_tag_, col_accent_hi());
+    boot_log::log("telem_dash:Type R auto ignition");
+
+    // 1) Splash（縮短，快啲入動畫）
+    set_boot_cluster_visible(false);
+    set_hidden(tach_, true);
+    set_hidden(needle_, true);
+    set_hidden(needle_hub_, true);
+    set_hidden(tach_val_, true);
+    set_hidden(tach_unit_, true);
+    set_hidden(brand_ytt_, true);
+    set_hidden(brand_type_, true);
+    set_splash_visible(true);
+    poke_ui();
+    pros::delay(700);
+
+    // 2) Cluster + 高幀 sin sweep
+    set_splash_visible(false);
+    set_hidden(tach_, false);
+    set_hidden(needle_, false);
+    set_hidden(needle_hub_, false);
+    set_hidden(tach_val_, false);
+    set_hidden(tach_unit_, false);
+    place_tach_center();
+    if (boot_status_ != nullptr) {
+        lv_label_set_text(boot_status_, "YTT IGNITION");
+        style_text(boot_status_, col_accent_hi());
     }
-    for (int v = 0; v <= 100; v += 2) {
-        char b[8];
-        std::snprintf(b, sizeof(b), "%d", v);
-        set_tach_pct(v, b);
-        pros::delay(40); // 50 × 40ms = 2000ms
+    // 固定讀數位置，sweep 期間唔再 align（減卡頓）
+    if (tach_val_ != nullptr) lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, 8);
+    if (tach_unit_ != nullptr) lv_obj_align_to(tach_unit_, tach_val_, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
+    poke_ui();
+
+    constexpr int k_steps = 90;   // ~90 幀
+    constexpr int k_step_ms = 14; // ≈70fps 體感；總長 ~1.26s
+    bool was_vtec = false;
+    int last_speed = -1;
+    for (int i = 0; i <= k_steps; ++i) {
+        const float prog = static_cast<float>(i) / static_cast<float>(k_steps);
+        const float factor = std::sin(prog * 3.14159265f);
+        const int speed = static_cast<int>(factor * 100.0f + 0.5f);
+        const int arc_pct = static_cast<int>(factor * 100.0f + 0.5f);
+
+        // 指針／弧：每幀必更新
+        if (tach_ != nullptr) {
+            lv_arc_set_value(tach_, arc_pct);
+            lv_obj_set_style_arc_color(tach_, col_accent_hi(), LV_PART_INDICATOR);
+        }
+        set_needle_pct(arc_pct);
+
+        // 數字／LED／BAR：有變先改，減少 LVGL 重繪
+        if (speed != last_speed) {
+            last_speed = speed;
+            char b[8];
+            std::snprintf(b, sizeof(b), "%d", speed);
+            set_cached(tach_val_, cache_tach_, sizeof(cache_tach_), b);
+            // 1→2→3 位數字闊度唔同，要重新置中（否則 "100" 會偏）
+            if (tach_val_ != nullptr) {
+                lv_obj_update_layout(tach_val_);
+                lv_obj_align_to(tach_val_, tach_, LV_ALIGN_CENTER, 0, 8);
+            }
+            if (tach_unit_ != nullptr) {
+                lv_obj_align_to(tach_unit_, tach_val_, LV_ALIGN_OUT_BOTTOM_MID, 0, 0);
+            }
+        }
+        if ((i & 1) == 0) update_boot_leds(factor); // 隔幀更新 LED
+        if (boot_boost_ != nullptr && (i % 3) == 0) {
+            char bb[24];
+            std::snprintf(bb, sizeof(bb), "%.1f BAR", static_cast<double>(factor * 1.3f));
+            if (std::strncmp(cache_boost_, bb, sizeof(cache_boost_)) != 0) {
+                std::snprintf(cache_boost_, sizeof(cache_boost_), "%s", bb);
+                lv_label_set_text(boot_boost_, cache_boost_);
+            }
+        }
+        const bool vtec = factor >= 0.72f;
+        if (vtec != was_vtec && boot_turbo_ != nullptr) {
+            was_vtec = vtec;
+            lv_label_set_text(boot_turbo_, vtec ? "TURBO VTEC" : "TURBO STD");
+            style_text(boot_turbo_, vtec ? col_accent_hi() : col_muted());
+        }
+
+        // 多 call 幾次 timer，等 flush 追上指針 transform
+        lv_timer_handler();
+        lv_timer_handler();
+        pros::delay(k_step_ms);
     }
-    if (boot_tag_ != nullptr) {
-        lv_label_set_text(boot_tag_, "CAL");
-        style_text(boot_tag_, col_accent_hi());
+
+    // 3) idle
+    set_tach_pct(11, "0");
+    update_boot_leds(0.11f);
+    if (boot_boost_ != nullptr) {
+        std::snprintf(cache_boost_, sizeof(cache_boost_), "0.0 BAR");
+        lv_label_set_text(boot_boost_, cache_boost_);
     }
-    pros::delay(150);
+    if (boot_status_ != nullptr) {
+        lv_label_set_text(boot_status_, "SYSTEM ONLINE");
+        style_text(boot_status_, col_neon_g());
+    }
+    poke_ui();
+    pros::delay(200);
 }
 
 void on_pid_btn(lv_event_t* e) {
@@ -380,9 +755,17 @@ void start() {
     lv_obj_clean(parent_);
     build_chrome(parent_);
     if (!session_booted_) {
-        place_tach_center();
-        set_tach_pct(0, "0");
-        boot_log::log("telem_dash:boot centered (await finish_boot sweep)");
+        // 等 finish_boot 自動播 ignition；先黑屏等 splash
+        set_hidden(tach_, true);
+        set_hidden(needle_, true);
+        set_hidden(needle_hub_, true);
+        set_hidden(tach_val_, true);
+        set_hidden(tach_unit_, true);
+        set_hidden(boot_tag_, true);
+        set_hidden(brand_ytt_, true);
+        set_hidden(brand_type_, true);
+        set_boot_cluster_visible(false);
+        boot_log::log("telem_dash:await auto ignition");
     } else {
         layout_live();
         boot_log::log("telem_dash:live direct");
@@ -396,8 +779,7 @@ void finish_boot() {
     if (!ready() || live_ready_) return;
 
     boot_log::log("telem_dash:finish_boot");
-    place_tach_center();
-    poke_refresh();
+    // 自動：splash → sin 掃針（唔使掣）
     run_boot_sweep_blocking();
 
     place_tach_left_batt();
@@ -409,10 +791,7 @@ void finish_boot() {
     char b[8];
     std::snprintf(b, sizeof(b), "%d", batt);
     set_tach_pct(batt, b);
-    if (boot_tag_ != nullptr) {
-        lv_label_set_text(boot_tag_, "BATT");
-        style_text(boot_tag_, col_muted());
-    }
+    center_tach_readout();
     poke_refresh();
     boot_log::log("telem_dash:live ready");
 }
@@ -422,8 +801,15 @@ void release() {
     boot_log::log("telem_dash:release");
     lv_obj_clean(parent_);
     parent_ = nullptr;
-    tach_ = tach_val_ = tach_unit_ = boot_tag_ = nullptr;
+    tach_ = face_ = needle_ = needle_hub_ = nullptr;
+    tick_lo_ = tick_mid_ = tick_hi_ = nullptr;
+    tach_val_ = tach_unit_ = boot_tag_ = nullptr;
     brand_ytt_ = brand_type_ = nullptr;
+    splash_ = splash_title_ = splash_sub_ = nullptr;
+    boot_gear_ = boot_mode_ = boot_boost_ = nullptr;
+    boot_status_ = boot_turbo_ = boot_rpm_lbl_ = nullptr;
+    for (lv_obj_t*& led : boot_leds_) led = nullptr;
+    cache_boost_[0] = '\0';
     hdr_auton_ = hdr_ram_ = nullptr;
     pose_x_ = pose_y_ = pose_t_ = path_vals_ = nullptr;
     dist_f_ = dist_b_ = dist_l_ = dist_r_ = nullptr;
@@ -433,6 +819,7 @@ void release() {
     cache_df_[0] = cache_db_[0] = cache_dl_[0] = cache_dr_[0] = '\0';
     cache_drive_[0] = cache_mech_[0] = '\0';
     live_ready_ = false;
+    gauge_hidden_ = false;
 }
 
 void focus() {
@@ -444,8 +831,28 @@ bool ready() { return parent_ != nullptr; }
 bool live() { return live_ready_; }
 const char* last_error() { return last_error_; }
 
+void set_gauge_hidden(bool hidden) {
+    gauge_hidden_ = hidden;
+    // PID overlay 時隱藏錶／指針（LVGL transform 可能畫穿前景）
+    set_hidden(tach_, hidden);
+    set_hidden(needle_, hidden);
+    set_hidden(needle_hub_, hidden);
+    set_hidden(tach_val_, hidden);
+    set_hidden(tach_unit_, hidden);
+    set_hidden(boot_tag_, hidden);
+    if (hidden) {
+        set_hidden(face_, true);
+    } else if (live_ready_) {
+        set_hidden(face_, true);
+        set_hidden(tick_lo_, true);
+        set_hidden(tick_mid_, true);
+        set_hidden(tick_hi_, true);
+        center_tach_readout();
+    }
+}
+
 void refresh() {
-    if (parent_ == nullptr || !live_ready_) return;
+    if (parent_ == nullptr || !live_ready_ || gauge_hidden_) return;
 
     char buf[64];
 

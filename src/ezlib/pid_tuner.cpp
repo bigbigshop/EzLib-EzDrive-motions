@@ -541,6 +541,12 @@ void PidTuner::start() {
     lv_obj_set_size(page_, 480, 240);
     lv_obj_set_pos(page_, 0, 0);
     lv_obj_clear_flag(page_, LV_OBJ_FLAG_SCROLLABLE);
+    // 全螢幕實底，避免底下 Dash 電量錶／指針透出
+    lv_obj_set_style_bg_color(page_, lv_color_hex(0x121418), 0);
+    lv_obj_set_style_bg_opa(page_, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(page_, 0, 0);
+    lv_obj_set_style_radius(page_, 0, 0);
+    lv_obj_set_style_pad_all(page_, 0, 0);
     lv_obj_add_flag(page_, LV_OBJ_FLAG_HIDDEN);
 
     build_ui(page_);
@@ -553,7 +559,10 @@ void PidTuner::focus() {
     if (page_ != nullptr) {
         lv_obj_clear_flag(page_, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(page_);
+        // transform 指針有時會畫穿 overlay；蓋住時隱藏 Dash 錶
+        telem_dash::set_gauge_hidden(true);
         lv_obj_invalidate(page_);
+        for (int i = 0; i < 3; ++i) lv_timer_handler();
     }
 }
 
@@ -561,6 +570,7 @@ void PidTuner::hide() {
     if (page_ != nullptr) {
         lv_obj_add_flag(page_, LV_OBJ_FLAG_HIDDEN);
     }
+    telem_dash::set_gauge_hidden(false);
 }
 
 void PidTuner::toggle_controller_mode() {
