@@ -1,6 +1,6 @@
 #pragma once
 
-#include "ez_compat.hpp"
+#include "ezlib/ez_compat.hpp"
 #include "pros/misc.hpp"
 #include "liblvgl/lvgl.h"
 #include "robodash/api.h"

@@ -1,10 +1,10 @@
 #include "main.h"
-#include "customs/monitor.hpp"
-#include "customs/auton_select.hpp"
-#include "customs/boot_log.hpp"
-#include "customs/telem_dash.hpp"
-#include "customs/ui_pages.hpp"
-#include "pid_tuner.hpp"
+#include "ezlib/monitor.hpp"
+#include "ezlib/auton_select.hpp"
+#include "ezlib/boot_log.hpp"
+#include "ezlib/telem_dash.hpp"
+#include "ezlib/ui_pages.hpp"
+#include "ezlib/pid_tuner.hpp"
 
 #include <cstdio>
 #include <cstring>

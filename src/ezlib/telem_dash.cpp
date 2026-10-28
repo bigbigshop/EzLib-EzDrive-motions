@@ -1,10 +1,10 @@
-#include "customs/telem_dash.hpp"
+#include "ezlib/telem_dash.hpp"
 
-#include "customs/auton_select.hpp"
-#include "customs/boot_log.hpp"
+#include "ezlib/auton_select.hpp"
+#include "ezlib/boot_log.hpp"
 #include "customs/dash_config.hpp"
 #include "customs/objDeclare.hpp"
-#include "customs/ui_pages.hpp"
+#include "ezlib/ui_pages.hpp"
 #include "main.h"
 #include "robodash/api.h"
 

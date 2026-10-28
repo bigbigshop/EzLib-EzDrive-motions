@@ -1,6 +1,6 @@
-#include "customs/boot_log.hpp"
+#include "ezlib/boot_log.hpp"
 
-#include "customs/sd_log.hpp"
+#include "ezlib/sd_log.hpp"
 #include "pros/rtos.hpp"
 
 #include <cstdarg>

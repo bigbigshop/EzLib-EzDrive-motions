@@ -2,8 +2,8 @@
 
 #include "lemlib/api.hpp"
 #include "api.h"
-#include "ez_compat.hpp"
-#include "pid_tuner.hpp"
+#include "ezlib/ez_compat.hpp"
+#include "ezlib/pid_tuner.hpp"
 #include "robodash/api.h"
 
 //class Chassis;

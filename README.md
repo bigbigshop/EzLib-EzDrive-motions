@@ -6,7 +6,7 @@
 - 轉向目標是**絕對航向，單位為度**。LemLib 航向以 0° 朝向 +Y，順時針為正。
 - `timeout` 的單位是毫秒。時間屆滿後馬達停止，該次運動結束。
 
-`main.h` 引入 `lemlib/api.hpp` 與 `ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
+`main.h` 引入 `lemlib/api.hpp` 與 `ezlib/ez_compat.hpp`。`chassis`、`ezPID` 與 `pidTuner` 在 `src/main.cpp` 建立。
 
 此樹的版本：PROS kernel 4.1.1、LemLib 0.5.5、robodash 2.3.0、LVGL 8.3.x（**`LV_MEM_CUSTOM=1` → `malloc`**，唔再食靜態 BSS pool；`liblvgl.a` 仍須 softfp）。Brain 開機直入 **Type R Dash**（中心 ignition → 校正後左側電量 + 數據）；auton 用 **headless** `auton_select`（無 `rd::Selector` 頁）。
 
@@ -14,7 +14,7 @@
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | **現時主線**：Type R Dash、headless auton、`dash_config`、malloc LVGL、cos `getRealPose` |
+| `main` | **現時主線**：Type R Dash、headless auton、`ezlib/` 庫目錄、`dash_config`、malloc LVGL、cos `getRealPose` |
 | `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
 | `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
 | `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
@@ -25,6 +25,7 @@
 
 ### 2026-10-28 — Type R Dash 成為 `main`
 
+- **目錄**：庫內程式移去 `include/ezlib` + `src/ezlib`（`ez_compat`／`pid_tuner`／`relocate`／`boot_log`／`ui_pages`／`telem_dash`／`sd_log`／`monitor`／`auton_select`）；`customs/` 留俾 user 自寫。
 - **Brain UI**：開機 `telem_dash`（Type R）— 校正前中心 gauge 0→100～2s；校正後左移電量弧 + pose／DIST／DRV／MCH／RAM。
 - **Headless auton**：`auton_select` 取代 `rd::Selector`；controller ←→ 換名，Dash header 顯示。
 - **Dash ↔ PID**：`ui_pages` 只 `focus`，唔刪頁（慳 malloc 碎裂）；場控仍 teardown。
@@ -63,7 +64,7 @@
 ### 2026-10-24 — PID tuner / SD / 動畫 / 場控
 
 - **控制器按鍵重配**（見下方表格）：X+A 進入、X 退出；A=pose0；B/Y=±12in；L1/R1=絕對 ±90°；L2/R2=左右各轉 10 圈；←→ 換 field **並** `set_pose(0,0,0)`。
-- **SD CSV 累積記錄**：`/usd/pid_tune_log.csv`、`/usd/findingOffset.csv`（`src/customs/sd_log.cpp`）。
+- **SD CSV 累積記錄**：`/usd/pid_tune_log.csv`、`/usd/findingOffset.csv`（`src/ezlib/sd_log.cpp`）。
 - ±12in 完成後記錄 **IMU / odom**，Brain 即時列顯示 `imu` / `odom` / `dIMU` / `dOdom`。
 - **單 view 動畫**：`robot01`–`robot10` 用 `lv_img_set_src` 換 frame（UP 開；`autoChange`）。
 - **場控接上**（`competition::is_connected()`）：關 tuner、停 Console 溫度/distance 狂刷、刪 Anim + PID page 還 LVGL heap；拔出後重建 PID page。場控時 controller 只顯示 B%/C%、auton 名、X/Y/T。
@@ -72,7 +73,7 @@
 
 - `EzDrive` bind 後，`moveToPose` / `turnToHeading` 等共用 `ezPID` 的 drive/turn PID。
 - 移除 purePID；auton 改走 `ezPID`。
-- 程式重組：`customs/`、`ez_compat`、`pid_tuner`、`relocate`。
+- 程式重組：user 碼進 `customs/`；庫碼進 `ezlib/`（含 `EzDrive`／tuner／`relocate`／Dash）。
 - 混合架構：LemLib 曲線／長距 + `ezPID` 短距精準 + 中段 `wallReset`／`getRealPose`（見舊站序言）。
 
 ---
@@ -84,19 +85,14 @@
 | 路徑 | 內容 |
 | --- | --- |
 | `src/main.cpp` | 底盤馬達／IMU／tracking／`chassis`／`ezPID`／`pidTuner` 定義 |
-| `include/customs/objDeclare.hpp` | `extern` + **inline** 感測器／intake／氣動 |
+| **`include/customs/` + `src/customs/`** | **User 側**（自己改／寫）：`objDeclare`、`autons`、`controls`、`fsm`、`dash_config` |
 | `include/customs/dash_config.hpp` | **改呢度** DRV／MCH 溫度對應邊粒馬達 |
-| `include/customs/telem_dash.hpp` + `src/customs/telem_dash.cpp` | Type R Dash（boot sweep → live） |
-| `include/customs/auton_select.hpp` + `src/customs/auton_select.cpp` | Headless auton 列表（無 LVGL Selector） |
-| `include/customs/ui_pages.hpp` + `src/customs/ui_pages.cpp` | Dash／PID 互斥 focus |
-| `include/relocate.hpp` + `src/relocate.cpp` | `wallReset`、`getRealPose`、distance 濾波、`auto_init_universal` |
-| `include/ez_compat.hpp` + `src/ez_compat.cpp` | `EzDrive` |
-| `include/pid_tuner.hpp` + `src/pid_tuner.cpp` | Brain + controller PID 調校器 |
-| `include/customs/sd_log.hpp` + `src/customs/sd_log.cpp` | SD CSV append |
-| `src/customs/monitor.cpp` | controller 三行、動畫、隱藏 views chrome、刷新 Dash |
-| `src/customs/controls.cpp` | `pneumaticsBtn()` |
+| **`include/ezlib/` + `src/ezlib/`** | **庫內**（一般唔使改）：`ez_compat`、`pid_tuner`、`relocate`、`telem_dash`、`monitor`、`auton_select`、`sd_log`、`boot_log`、`ui_pages` |
+| `include/ez_compat/` | `pid.hpp`、`motion_math.hpp`（LemLib motions 共用數學；路徑維持 `ez_compat/...`） |
 | `src/assets/robot01.c` … `robot10.c` | LVGL C array 動畫幀（flash） |
 | `firmware/liblvgl.a` | 預編譯 LVGL（softfp；而家 `LV_MEM_CUSTOM` 唔靠靜態 pool） |
+
+Include 例：`#include "ezlib/ez_compat.hpp"`、`#include "ezlib/telem_dash.hpp"`、`#include "customs/dash_config.hpp"`。
 
 ### 慣例：`extern` vs `inline`
 
@@ -272,7 +268,7 @@ ezPID.waitUntilDone();
 
 ## 座標重置：`wallReset` / `getRealPose`
 
-Odometry 會長距離累積誤差。本庫用兩層中段校正（理念與 [舊說明書第四章](https://ezlib.ykyle.eu/) 相同，實作在 `src/relocate.cpp`）。
+Odometry 會長距離累積誤差。本庫用兩層中段校正（理念與 [舊說明書第四章](https://ezlib.ykyle.eu/) 相同，實作在 `src/ezlib/relocate.cpp`）。
 
 ### `wallReset` — 撞牆硬重置
 

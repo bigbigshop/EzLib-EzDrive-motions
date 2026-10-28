@@ -1,4 +1,4 @@
-#include "ez_compat.hpp"
+#include "ezlib/ez_compat.hpp"
 #include "ez_compat/motion_math.hpp"
 
 #include <cmath>

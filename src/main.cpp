@@ -1,9 +1,9 @@
 #include "main.h"
-#include "customs/auton_select.hpp"
-#include "customs/telem_dash.hpp"
-#include "customs/ui_pages.hpp"
+#include "ezlib/auton_select.hpp"
+#include "ezlib/telem_dash.hpp"
+#include "ezlib/ui_pages.hpp"
 #include "lemlib/api.hpp" // IWYU pragma: keep
-#include "pid_tuner.hpp"
+#include "ezlib/pid_tuner.hpp"
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -219,7 +219,7 @@ void initialize() {
     
     */
    
-    // UI 任務（圖片動畫 + controller 文字分頁）見 customs/monitor.cpp
+    // UI 任務（圖片動畫 + controller 文字分頁）見 ezlib/monitor.cpp
     boot_log::log("initialize:spawn uiTask");
     pros::Task uiTask(uiTask_fn);
 
@@ -267,7 +267,6 @@ void autonomous() {
 void opcontrol() {
     boot_log::log("opcontrol:enter");
     // Dash is created in telemetry_fn after settle; focus when ready / on DOWN.
-    // Light telemetry — Dash labels only (128KB LVGL).
     pros::Task my_telemetry_task(telemetry_fn);
     boot_log::log("opcontrol:telemetry spawned");
 

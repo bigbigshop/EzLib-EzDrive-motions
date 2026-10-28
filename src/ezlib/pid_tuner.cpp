@@ -1,9 +1,9 @@
-#include "pid_tuner.hpp"
-#include "customs/monitor.hpp"
+#include "ezlib/pid_tuner.hpp"
+#include "ezlib/monitor.hpp"
 #include "customs/objDeclare.hpp"
-#include "customs/sd_log.hpp"
-#include "customs/telem_dash.hpp"
-#include "customs/ui_pages.hpp"
+#include "ezlib/sd_log.hpp"
+#include "ezlib/telem_dash.hpp"
+#include "ezlib/ui_pages.hpp"
 
 #include "pros/rtos.hpp"
 

@@ -43,14 +43,14 @@
 #include "lemlib/api.hpp"
 #include "customs/objDeclare.hpp"
 #include "customs/autons.hpp"
-#include "relocate.hpp"
+#include "ezlib/relocate.hpp"
 #include "customs/controls.hpp"
-#include "customs/monitor.hpp"
-#include "customs/boot_log.hpp"
+#include "ezlib/monitor.hpp"
+#include "ezlib/boot_log.hpp"
 #include "robodash/api.h"
 //#include "wkf.hpp"
 #include "customs/fsm.hpp"
-#include "ez_compat.hpp"
+#include "ezlib/ez_compat.hpp"
 
 extern int programNumber;
 extern int totalPrograms;

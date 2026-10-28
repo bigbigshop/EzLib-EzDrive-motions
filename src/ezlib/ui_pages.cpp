@@ -1,9 +1,9 @@
-#include "customs/ui_pages.hpp"
+#include "ezlib/ui_pages.hpp"
 
-#include "customs/boot_log.hpp"
-#include "customs/telem_dash.hpp"
+#include "ezlib/boot_log.hpp"
+#include "ezlib/telem_dash.hpp"
 #include "main.h"
-#include "pid_tuner.hpp"
+#include "ezlib/pid_tuner.hpp"
 
 namespace ui_pages {
 

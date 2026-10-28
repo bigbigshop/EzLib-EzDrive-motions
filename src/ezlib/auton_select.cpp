@@ -1,6 +1,6 @@
-#include "customs/auton_select.hpp"
+#include "ezlib/auton_select.hpp"
 
-#include "customs/boot_log.hpp"
+#include "ezlib/boot_log.hpp"
 
 #include <cstdio>
 
