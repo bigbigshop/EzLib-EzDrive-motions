@@ -10,10 +10,11 @@
 #include <cstdio>
 #include <cstring>
 
-bool autonMode = false;
-
-bool odomIsUp = false;
-bool odomUpRunning = false;
+// Loading page theme (Brain boot animation before Type R Dash):
+//   1 = none
+//   2 = Type R
+//   3 = Spear of Longinus 
+constexpr int k_loading_theme = 3;
 
 // =======================================================
 // 距離感測器相對底盤中心之偏移（吋）— 供 relocate／auton 使用
@@ -82,6 +83,8 @@ void initialize() {
     pros::c::serctl(SERCTL_DISABLE_COBS, nullptr);
     lemlib::infoSink()->setLowestLevel(lemlib::Level::FATAL);
     lemlib::telemetrySink()->setLowestLevel(lemlib::Level::FATAL);
+
+    telem_dash::set_loading_theme(static_cast<telem_dash::LoadingTheme>(k_loading_theme));
 
     // Controller first — no USB printf.
     controller.clear();
@@ -174,8 +177,6 @@ void competition_initialize() {}
 //ASSET(example_txt); // '.' replaced with "_" to make c++ happy
 
 /** Runs the headless auton selected in auton_select. */
-bool autoStart = false;
-
 void autonomous() { 
     chassis.setPose(0, 0, 0);
     ezPID.reset_pid();
@@ -220,11 +221,6 @@ void opcontrol() {
                 int leftX = controller.get_analog(pros::E_CONTROLLER_ANALOG_LEFT_X);
                 chassis.arcade(leftY, (leftX * 0.75)); // 0.75 = 轉向比例，可調整
             }
-        }
-
-        if (odomIsUp && !odomUpRunning) {
-            odomUpRunning = true;
-            matchload.set_value(true);
         }
 
         // 練習模式按鍵綁定（場控或 tuner 啟用時不執行此段）

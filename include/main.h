@@ -51,12 +51,9 @@
 #include "customs/fsm.hpp"
 #include "ezlib/ez_compat.hpp"
 
-extern int programNumber;
-extern int totalPrograms;
-extern bool autoStart;
-
-//extern lv_img_dsc_t team_logo;
-//extern lv_img_dsc_t kukuku;
+// extern int programNumber;
+// extern int totalPrograms;
+// extern bool autoStart;
 
 
 /**

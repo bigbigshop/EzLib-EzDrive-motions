@@ -115,6 +115,7 @@ bool live_ready_ = false;
 bool session_booted_ = false;
 bool gauge_hidden_ = false;
 char last_error_[48] = {};
+LoadingTheme loading_theme_ = LoadingTheme::TypeR;
 
 void set_err(const char* msg) {
     if (msg == nullptr) {
@@ -566,6 +567,238 @@ void poke_ui() {
     lv_timer_handler();
 }
 
+void hide_all_boot_widgets() {
+    set_boot_cluster_visible(false);
+    set_splash_visible(false);
+    set_hidden(tach_, true);
+    set_hidden(tach_val_, true);
+    set_hidden(tach_unit_, true);
+    set_hidden(brand_ytt_, true);
+    set_hidden(brand_type_, true);
+    set_hidden(boot_tag_, true);
+    set_hidden(torque_, true);
+    set_hidden(fuel_, true);
+    set_hidden(fuel_val_, true);
+    set_hidden(fuel_unit_, true);
+    set_hidden(fuel_tag_, true);
+}
+
+lv_obj_t* make_line(lv_obj_t* parent, lv_point_t* pts, uint16_t n, lv_coord_t w, lv_color_t c) {
+    lv_obj_t* line = lv_line_create(parent);
+    if (line == nullptr) return nullptr;
+    lv_line_set_points(line, pts, n);
+    lv_obj_set_style_line_width(line, w, 0);
+    lv_obj_set_style_line_color(line, c, 0);
+    lv_obj_set_style_line_rounded(line, true, 0);
+    lv_obj_clear_flag(line, LV_OBJ_FLAG_CLICKABLE);
+    return line;
+}
+
+// Spear of Longinus loading (preview: Desktop/demo.html) — LVGL approximation
+void run_spear_boot_blocking() {
+    boot_log::log("telem_dash:Spear of Longinus boot");
+    hide_all_boot_widgets();
+    if (parent_ == nullptr) return;
+
+    lv_obj_t* overlay = lv_obj_create(parent_);
+    if (overlay == nullptr) return;
+    lv_obj_set_pos(overlay, 0, 0);
+    lv_obj_set_size(overlay, 480, 240);
+    lv_obj_clear_flag(overlay, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(overlay, lv_color_hex(0x030305), 0);
+    lv_obj_set_style_bg_opa(overlay, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(overlay, 1, 0);
+    lv_obj_set_style_border_color(overlay, lv_color_hex(0x331111), 0);
+    lv_obj_set_style_radius(overlay, 0, 0);
+    lv_obj_set_style_pad_all(overlay, 0, 0);
+    lv_obj_move_foreground(overlay);
+
+    lv_obj_t* title = make_label(overlay, "YTT EzLib", 18, 10, lv_color_hex(0xFF3333), &lv_font_montserrat_14);
+    lv_obj_t* status = make_label(overlay, "LOADING...", 340, 12, lv_color_hex(0xFFAAAA), &lv_font_montserrat_12);
+    lv_obj_t* prog_lbl = make_label(overlay, "SYSTEM PROGRESS:", 18, 210, lv_color_hex(0x888888), &lv_font_montserrat_12);
+    lv_obj_t* pct_lbl = make_label(overlay, "0%", 170, 204, lv_color_hex(0xFF2222), &lv_font_montserrat_20);
+    (void)title;
+    (void)prog_lbl;
+
+    constexpr lv_coord_t bar_x = 35;
+    constexpr lv_coord_t bar_y = 125;
+    constexpr lv_coord_t bar_w = 410;
+    constexpr lv_coord_t bar_h = 10;
+
+    lv_obj_t* bar_frame = lv_obj_create(overlay);
+    if (bar_frame != nullptr) {
+        lv_obj_set_pos(bar_frame, bar_x - 4, bar_y - 4);
+        lv_obj_set_size(bar_frame, bar_w + 8, bar_h + 8);
+        lv_obj_clear_flag(bar_frame, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_opa(bar_frame, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(bar_frame, 2, 0);
+        lv_obj_set_style_border_color(bar_frame, lv_color_hex(0xFF3333), 0);
+        lv_obj_set_style_radius(bar_frame, 2, 0);
+        lv_obj_set_style_pad_all(bar_frame, 0, 0);
+    }
+    lv_obj_t* bar_bg = lv_obj_create(overlay);
+    if (bar_bg != nullptr) {
+        lv_obj_set_pos(bar_bg, bar_x, bar_y);
+        lv_obj_set_size(bar_bg, bar_w, bar_h);
+        lv_obj_clear_flag(bar_bg, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(bar_bg, lv_color_hex(0x190A0F), 0);
+        lv_obj_set_style_bg_opa(bar_bg, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(bar_bg, 0, 0);
+        lv_obj_set_style_radius(bar_bg, 0, 0);
+        lv_obj_set_style_pad_all(bar_bg, 0, 0);
+    }
+    lv_obj_t* bar_fill = lv_obj_create(overlay);
+    if (bar_fill != nullptr) {
+        lv_obj_set_pos(bar_fill, bar_x, bar_y);
+        lv_obj_set_size(bar_fill, 1, bar_h);
+        lv_obj_clear_flag(bar_fill, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(bar_fill, lv_color_hex(0xCC0000), 0);
+        lv_obj_set_style_bg_opa(bar_fill, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(bar_fill, 0, 0);
+        lv_obj_set_style_radius(bar_fill, 0, 0);
+        lv_obj_set_style_pad_all(bar_fill, 0, 0);
+    }
+    lv_obj_t* end_cap = lv_obj_create(overlay);
+    if (end_cap != nullptr) {
+        lv_obj_set_pos(end_cap, bar_x + bar_w + 6, bar_y - 6);
+        lv_obj_set_size(end_cap, 3, bar_h + 12);
+        lv_obj_clear_flag(end_cap, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(end_cap, lv_color_hex(0xFF3333), 0);
+        lv_obj_set_style_bg_opa(end_cap, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(end_cap, 0, 0);
+        lv_obj_set_style_radius(end_cap, 0, 0);
+        lv_obj_set_style_pad_all(end_cap, 0, 0);
+    }
+
+    // Spear graphic — canvas coords shifted (+140,+20) so LVGL does not clip negatives.
+    // Matches demo.html drawCorrectLonginus: shaft | helix | twin prongs (tip at +95).
+    constexpr lv_coord_t ox = 140;
+    constexpr lv_coord_t oy = 20;
+    static lv_point_t shaft_pts[32];
+    static lv_point_t helix_a[16];
+    static lv_point_t helix_b[16];
+    static lv_point_t prong_u[5];
+    static lv_point_t prong_d[5];
+    for (int i = 0; i < 32; ++i) {
+        const float x = -140.f + static_cast<float>(i) * (125.f / 31.f);
+        shaft_pts[i].x = static_cast<lv_coord_t>(x) + ox;
+        shaft_pts[i].y = static_cast<lv_coord_t>(std::sin((x + 140.f) * 0.2f) * 3.f) + oy;
+    }
+    for (int i = 0; i < 16; ++i) {
+        const float x = -20.f + static_cast<float>(i) * (30.f / 15.f);
+        const float wave = std::sin((x + 20.f) * 0.3f) * 7.f;
+        helix_a[i].x = static_cast<lv_coord_t>(x) + ox;
+        helix_a[i].y = static_cast<lv_coord_t>(wave) + oy;
+        helix_b[i].x = static_cast<lv_coord_t>(x) + ox;
+        helix_b[i].y = static_cast<lv_coord_t>(-wave) + oy;
+    }
+    prong_u[0] = {static_cast<lv_coord_t>(10 + ox), static_cast<lv_coord_t>(5 + oy)};
+    prong_u[1] = {static_cast<lv_coord_t>(20 + ox), static_cast<lv_coord_t>(9 + oy)};
+    prong_u[2] = {static_cast<lv_coord_t>(95 + ox), static_cast<lv_coord_t>(8 + oy)};
+    prong_u[3] = {static_cast<lv_coord_t>(20 + ox), static_cast<lv_coord_t>(6 + oy)};
+    prong_u[4] = prong_u[0];
+    prong_d[0] = {static_cast<lv_coord_t>(10 + ox), static_cast<lv_coord_t>(-5 + oy)};
+    prong_d[1] = {static_cast<lv_coord_t>(20 + ox), static_cast<lv_coord_t>(-9 + oy)};
+    prong_d[2] = {static_cast<lv_coord_t>(95 + ox), static_cast<lv_coord_t>(-8 + oy)};
+    prong_d[3] = {static_cast<lv_coord_t>(20 + ox), static_cast<lv_coord_t>(-6 + oy)};
+    prong_d[4] = prong_d[0];
+
+    lv_obj_t* spear = lv_obj_create(overlay);
+    if (spear != nullptr) {
+        lv_obj_set_size(spear, 250, 40);
+        lv_obj_clear_flag(spear, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_opa(spear, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(spear, 0, 0);
+        lv_obj_set_style_pad_all(spear, 0, 0);
+        const lv_color_t red = lv_color_hex(0xFF3333);
+        make_line(spear, shaft_pts, 32, 3, red);
+        make_line(spear, helix_a, 16, 3, red);
+        make_line(spear, helix_b, 16, 3, red);
+        make_line(spear, prong_u, 5, 2, red);
+        make_line(spear, prong_d, 5, 2, red);
+        auto make_tip = [&](lv_coord_t x, lv_coord_t y) {
+            lv_obj_t* tip = lv_obj_create(spear);
+            if (tip == nullptr) return;
+            lv_obj_set_pos(tip, x, y);
+            lv_obj_set_size(tip, 3, 3);
+            lv_obj_clear_flag(tip, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+            lv_obj_set_style_radius(tip, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_bg_color(tip, lv_color_hex(0xFFFFFF), 0);
+            lv_obj_set_style_bg_opa(tip, LV_OPA_COVER, 0);
+            lv_obj_set_style_border_width(tip, 0, 0);
+            lv_obj_set_style_pad_all(tip, 0, 0);
+        };
+        make_tip(static_cast<lv_coord_t>(95 + ox - 1), static_cast<lv_coord_t>(8 + oy - 1));
+        make_tip(static_cast<lv_coord_t>(95 + ox - 1), static_cast<lv_coord_t>(-8 + oy - 1));
+    }
+
+    // demo.html: drawCorrectLonginus(spearTipX - 25, spearTipY) with local origin at canvas 0
+    constexpr lv_coord_t k_spear_anchor = 25 + ox; // spear.x = tip_x - 25 - ox
+
+    constexpr int k_steps = 70;
+    constexpr int k_step_ms = 18;
+    char pct_buf[8] = {};
+    for (int i = 0; i <= k_steps; ++i) {
+        const float progress = static_cast<float>(i) / static_cast<float>(k_steps);
+        const int pct = static_cast<int>(progress * 100.f + 0.5f);
+        const lv_coord_t fill_w = static_cast<lv_coord_t>(bar_w * progress);
+        if (bar_fill != nullptr) {
+            lv_obj_set_width(bar_fill, fill_w < 1 ? 1 : fill_w);
+            lv_color_t fill_c = lv_color_hex(0xCC0000);
+            if (progress > 0.7f) fill_c = lv_color_hex(0xFF4444);
+            else if (progress < 0.25f) fill_c = lv_color_hex(0x440000);
+            lv_obj_set_style_bg_color(bar_fill, fill_c, 0);
+        }
+        if (spear != nullptr) {
+            const lv_coord_t tip_x = bar_x + fill_w;
+            const lv_coord_t tip_y = bar_y + bar_h / 2;
+            lv_obj_set_pos(spear, tip_x - k_spear_anchor, tip_y - oy);
+        }
+        std::snprintf(pct_buf, sizeof(pct_buf), "%d%%", pct);
+        if (pct_lbl != nullptr) lv_label_set_text(pct_lbl, pct_buf);
+
+        poke_ui();
+        pros::delay(k_step_ms);
+    }
+
+    if (status != nullptr) {
+        lv_label_set_text(status, "SYSTEM READY");
+        style_text(status, lv_color_hex(0x00FFCC));
+    }
+    if (end_cap != nullptr) lv_obj_set_style_bg_color(end_cap, lv_color_hex(0x00FFCC), 0);
+    if (pct_lbl != nullptr) style_text(pct_lbl, lv_color_hex(0x00FFCC));
+
+    // Brief impact rings (shockwave stand-in from demo.html)
+    const lv_coord_t impact_x = bar_x + bar_w;
+    const lv_coord_t impact_y = bar_y + bar_h / 2;
+    lv_obj_t* ring1 = lv_obj_create(overlay);
+    lv_obj_t* ring2 = lv_obj_create(overlay);
+    for (lv_obj_t* ring : {ring1, ring2}) {
+        if (ring == nullptr) continue;
+        lv_obj_clear_flag(ring, LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_opa(ring, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(ring, 2, 0);
+        lv_obj_set_style_border_color(ring, lv_color_hex(0xFF3333), 0);
+        lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(ring, 0, 0);
+    }
+    for (int r = 4; r <= 40; r += 6) {
+        if (ring1 != nullptr) {
+            lv_obj_set_size(ring1, r * 2, r * 2);
+            lv_obj_set_pos(ring1, impact_x - r, impact_y - r);
+        }
+        if (ring2 != nullptr) {
+            const int r2 = r + 8;
+            lv_obj_set_size(ring2, r2 * 2, r2 * 2);
+            lv_obj_set_pos(ring2, impact_x - r2, impact_y - r2);
+        }
+        poke_ui();
+        pros::delay(28);
+    }
+
+    lv_obj_del(overlay);
+}
+
 void run_boot_sweep_blocking() {
     boot_log::log("telem_dash:Type R auto ignition");
 
@@ -835,12 +1068,30 @@ void start() {
     set_err("");
 }
 
+void set_loading_theme(LoadingTheme theme) {
+    loading_theme_ = theme;
+    boot_log::log("telem_dash:loading_theme=%d", static_cast<int>(theme));
+}
+
+LoadingTheme loading_theme() { return loading_theme_; }
+
 void finish_boot() {
     if (!ready()) start();
     if (!ready() || live_ready_) return;
 
-    boot_log::log("telem_dash:finish_boot");
-    run_boot_sweep_blocking();
+    boot_log::log("telem_dash:finish_boot theme=%d", static_cast<int>(loading_theme_));
+    switch (loading_theme_) {
+        case LoadingTheme::None:
+            hide_all_boot_widgets();
+            break;
+        case LoadingTheme::Spear:
+            run_spear_boot_blocking();
+            break;
+        case LoadingTheme::TypeR:
+        default:
+            run_boot_sweep_blocking();
+            break;
+    }
 
     place_tach_left_batt();
     build_data_panels(parent_);
