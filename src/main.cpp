@@ -14,7 +14,7 @@
 //   1 = none
 //   2 = Type R
 //   3 = Spear of Longinus 
-constexpr int k_loading_theme = 3;
+constexpr int k_loading_theme = 2;
 
 // =======================================================
 // 距離感測器相對底盤中心之偏移（吋）— 供 relocate／auton 使用

@@ -12,8 +12,8 @@
 
 | Branch | Kernel | LemLib | robodash | liblvgl | ABI |
 | --- | --- | --- | --- | --- | --- |
-| **`main`（穩定）** | 4.1.1 | 0.5.5 | 2.3.0 | 8.3.x custom | **softfp** |
-| **`ezlib_4.2.2`（實驗）** | **4.2.2** | 0.5.6（source + `angleError` fix） | —（standalone LVGL） | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
+| **`EzLib_2.0.0_beta`（現行）** | **4.2.2** | 0.5.6（source + `angleError` fix） | —（standalone LVGL） | 8.3.9 **hardfp + `LV_MEM_CUSTOM`** | **hard** |
+| **`main`（舊穩定）** | 4.1.1 | 0.5.5 | 2.3.0 | 8.3.x custom | **softfp** |
 
 兩邊都係 **`LV_MEM_CUSTOM=1` → `malloc`**。Brain 開機直入 **Type R Dash**；auton 用 **headless** `auton_select`。
 
@@ -30,9 +30,10 @@
 
 | Git 參考 | 說明 |
 | --- | --- |
-| `main` | **穩定主線**（PROS 4.1.1 / softfp）：Type R Dash、`ezlib/`、`dash_config`、malloc LVGL |
-| `ezlib_4.2.2` | **實驗**：PROS **4.2.2** hard float + LemLib 0.5.6 + Type R boot triple gauges；須場測後先考慮合入 `main` |
-| `ezlib_4.2.1` | 歷史支（已升為 4.2.2／改名 `ezlib_4.2.2`） |
+| `EzLib_2.0.0_beta` | **真正 2.0 版本（beta）**：PROS **4.2.2** hard float + LemLib 0.5.6 + selectable loading（none／Type R／Spear）+ Type R Dash |
+| `main` | 舊穩定主線（PROS 4.1.1 / softfp） |
+| `ezlib_4.2.2` | 歷史支（已改名 `EzLib_2.0.0_beta`） |
+| `ezlib_4.2.1` | 歷史支（已升為 4.2.2） |
 | `LVGL-128KB-HEAP` | 開發時分支（內容已併入 `main`） |
 | `LVGL-32KB-HEAP` / tag `pre-lvgl-heap-bump` | 舊 32KB 靜態 pool 快照 |
 | `lvgl-128k-heap` | 早期 128→256KB 實驗（歷史參考） |
@@ -40,6 +41,12 @@
 ---
 
 ## Changelog
+
+### 2026-10-30 — branch `EzLib_2.0.0_beta`（真正 2.0）
+
+- Branch 由 `ezlib_4.2.2` **改名** `EzLib_2.0.0_beta`——呢條先係現行 EzLib 2.0 beta。
+- **Loading 主題**（`main.cpp` → `k_loading_theme`）：`1` none／`2` Type R／`3` Spear of Longinus。
+- 清走 dead globals（`autonMode`／`odomIsUp`／`programNumber` 等）。
 
 ### 2026-10-28 — branch `ezlib_4.2.2`：PROS 4.2.2 + Type R boot／Dash 整理
 
@@ -635,7 +642,7 @@ L2/R2 十圈測試。欄位：
 
 ## Type R Dash（`telem_dash`）
 
-開機流程（`ezlib_4.2.2`）：
+開機流程（`EzLib_2.0.0_beta`）：
 
 1. `telem_dash::start()` — 黑屏等 ignition（品牌／BATT 隱藏）。  
 2. `finish_boot()` → splash → **中 KM/H + 左 TORQUE Nm + 右 FUEL %** sin sweep（全程**無針**）。  
@@ -710,7 +717,7 @@ L2/R2 十圈測試。欄位：
 | --- | --- |
 | 設定 | `include/liblvgl/lv_conf.h` → **`LV_MEM_CUSTOM 1`**（`malloc`／`free`／`realloc`） |
 | 舊靜態 pool | `LV_MEM_CUSTOM 0` + `LV_MEM_SIZE` 編進 `firmware/liblvgl.a` 先有效 |
-| ABI | `liblvgl.a` 須同 `common.mk`：`main`=softfp；`ezlib_4.2.2`=hard |
+| ABI | `liblvgl.a` 須同 `common.mk`：`main`=softfp；`EzLib_2.0.0_beta`=hard |
 | Dash RAM 字 | `mallinfo().fordblks` +（`HeapLimit − sbrk`）≈ 系統剩餘 |
 
 紅 mon／abort 多為 LVGL object 過多、錯 thread 刪 widget、或碎裂。Dash／PID 用 focus 互斥；場控先 teardown。唔好用 `rd::Console::printf`。
