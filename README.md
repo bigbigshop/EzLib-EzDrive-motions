@@ -24,7 +24,7 @@
 | 連結 | 用途 |
 | --- | --- |
 | [pid.ykyle.eu](https://pid.ykyle.eu) | **PID 模擬器** — 睇 P／I／D、overshoot、調 `ezPID` drive／turn 增益前先建立直覺 |
-| [vex.ykyle.eu/moveToPose](https://vex.ykyle.eu/moveToPose) | **LemLib `moveToPose` 模擬器** — 調 `lead`、drift、`minSpeed`／`earlyExit`、`forwards`、目標 θ 等，睇弧線同到位行為 |
+| [moveToPose 模擬器](https://vex.ykyle.eu/moveToPose) | **LemLib `moveToPose` 模擬器** — 調 `lead`、drift、`minSpeed`／`earlyExit`、`forwards`、目標 θ 等，睇弧線同到位行為 |
 
 模擬器唔代替場上／SD CSV 實測；實機增益仍用 Brain／controller **PID tuner** + `/usd/pid_tune_log.csv`。
 
@@ -525,7 +525,7 @@ chassis.setPose(
 
 Brain **PID** 頁（compact UI）：換 field、± 調值、+12/−12、h±90、Print、Ctrl、Pose0、L10/R10（十圈）。亦可 **X+A** 用 controller 調（見下）。
 
-線上先建立直覺：[pid.ykyle.eu](https://pid.ykyle.eu)；`moveToPose` 參數：[vex.ykyle.eu/moveToPose](https://vex.ykyle.eu/moveToPose)。
+線上先建立直覺：[pid.ykyle.eu](https://pid.ykyle.eu)；`moveToPose` 參數：[moveToPose 模擬器](https://vex.ykyle.eu/moveToPose)。
 
 ### 建議流程（練習場）
 
